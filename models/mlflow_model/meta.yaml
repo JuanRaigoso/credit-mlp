@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/juanr/OneDrive%20-%20PUJ%20Cali/credit-mlp/mlruns/761310602473345966/698f859642bf43c5b644fadd65e8f8f5/artifacts
+end_time: 1761503194412
+entry_point_name: ''
+experiment_id: '761310602473345966'
+lifecycle_stage: active
+run_id: 698f859642bf43c5b644fadd65e8f8f5
+run_name: phase2_run_09
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1761502329321
+status: 3
+tags: []
+user_id: Juan Raigoso

@@ -1,0 +1,12 @@
+,corr_with_target
+NumberOfTimes90DaysLate,0.3423494222095594
+NumberOfTime60-89DaysPastDueNotWorse,0.2771106296296112
+NumberOfTime30-59DaysPastDueNotWorse,0.2574110032854713
+RevolvingUtilizationOfUnsecuredLines,0.24037817700357897
+age,-0.11703396072688932
+MonthlyIncome,-0.06697975297850192
+NumberOfDependents,0.045972245366099874
+NumberOfOpenCreditLinesAndLoans,-0.038586881474615635
+NumberRealEstateLoansOrLines,-0.0341183659142767
+DebtRatio,0.020596833224552965
+Sex_num,-0.0007826980479303607

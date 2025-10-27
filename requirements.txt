@@ -1,0 +1,10 @@
+pandas
+numpy
+scikit-learn
+matplotlib
+mlflow
+torch
+torchvision
+torchaudio
+streamlit
+joblib

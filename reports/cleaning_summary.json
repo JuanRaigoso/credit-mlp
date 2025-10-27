@@ -1,0 +1,53 @@
+{
+  "cap_rules": {
+    "RevolvingUtilizationOfUnsecuredLines": [
+      "upper",
+      1.0
+    ],
+    "DebtRatio": [
+      "upper",
+      10.0
+    ],
+    "NumberOfTime30-59DaysPastDueNotWorse": [
+      "upper",
+      10
+    ],
+    "NumberOfTimes90DaysLate": [
+      "upper",
+      10
+    ],
+    "NumberOfTime60-89DaysPastDueNotWorse": [
+      "upper",
+      10
+    ],
+    "MonthlyIncome": [
+      "upper",
+      30000.0
+    ],
+    "NumberOfDependents": [
+      "upper",
+      10
+    ],
+    "age": [
+      "lower",
+      18
+    ]
+  },
+  "impute_medians_from_train": {
+    "MonthlyIncome": 5400.0,
+    "NumberOfDependents": 0.0
+  },
+  "added_columns": [
+    "Sex",
+    "Sex_num"
+  ],
+  "notes": [
+    "Capping aplicado antes de imputación",
+    "Imputación con mediana del train para MonthlyIncome y NumberOfDependents",
+    "age mínima forzada a 18"
+  ],
+  "input_train": "data\\cs-training.csv",
+  "input_test": "data\\cs-test.csv",
+  "output_train": "data\\train_clean.csv",
+  "output_test": "data\\test_clean.csv"
+}

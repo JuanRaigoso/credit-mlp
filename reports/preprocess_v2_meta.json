@@ -1,0 +1,48 @@
+{
+  "winsor_caps": {
+    "RevolvingUtilizationOfUnsecuredLines": {
+      "p1": 0.0,
+      "p99": 1.0
+    },
+    "DebtRatio": {
+      "p1": 0.0,
+      "p99": 10.0
+    },
+    "MonthlyIncome": {
+      "p1": 0.0,
+      "p99": 23000.0
+    },
+    "NumberOfTime30-59DaysPastDueNotWorse": {
+      "p1": 0.0,
+      "p99": 4.0
+    },
+    "NumberOfTime60-89DaysPastDueNotWorse": {
+      "p1": 0.0,
+      "p99": 2.0
+    },
+    "NumberOfTimes90DaysLate": {
+      "p1": 0.0,
+      "p99": 3.0
+    }
+  },
+  "log_cols": [
+    "MonthlyIncome",
+    "RevolvingUtilizationOfUnsecuredLines",
+    "DebtRatio"
+  ],
+  "features": [
+    "RevolvingUtilizationOfUnsecuredLines",
+    "age",
+    "NumberOfTime30-59DaysPastDueNotWorse",
+    "DebtRatio",
+    "MonthlyIncome",
+    "NumberOfOpenCreditLinesAndLoans",
+    "NumberOfTimes90DaysLate",
+    "NumberRealEstateLoansOrLines",
+    "NumberOfTime60-89DaysPastDueNotWorse",
+    "NumberOfDependents",
+    "Sex_num"
+  ],
+  "random_state": 42,
+  "test_size": 0.2
+}
