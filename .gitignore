@@ -1,15 +1,17 @@
 # entornos y cachés
 .venv/
+.benv/
+.ven/
 __pycache__/
 *.pyc
 
-# MLflow local (no lo necesitamos en prod)
+# MLflow local
 mlruns/
 
-# reports de ejecución local
+# reports locales
 reports/inference/
 reports/logs/
 
-# datos temporales
+# datos temporales / escalados
 data/scaled/
 *.tmp
