@@ -91,67 +91,70 @@ def load_columns_used():
 @st.cache_resource(show_spinner=False)
 def load_model(run_id: str):
     """
-    Carga el MLP evitando PyFunc:
-    1) mlflow.pytorch.load_model desde 'models/mlflow_model'
-    2) TorchScript si existe algún .pt/.pth adentro del export local
-    3) mlflow.pytorch.load_model desde runs:/<run_id>/model
-    4) (opcional) TorchScript suelto en models/artifacts/checkpoint/*.pt
+    Carga el modelo evitando el forward pickled de __main__.MLP.
+    Prioridad:
+    A) TorchScript exacto: models/mlflow_model/artifacts/checkpoints/best_phase2_run_09.pt
+    B) Cualquier TorchScript .pt/.pth dentro de models/mlflow_model/artifacts/checkpoint(s)
+    C) Cualquier TorchScript en todo models/mlflow_model
+    D) mlflow.pytorch.load_model(...) (último recurso)
     """
     local_dir = MODELS_DIR / "mlflow_model"
 
-    # A) Intentar como modelo PyTorch (NO pyfunc)
-    if (local_dir / "MLmodel").exists():
+    # A) ruta exacta que nos diste
+    exact_ts = local_dir / "artifacts" / "checkpoints" / "best_phase2_run_09.pt"
+    candidates = []
+    if exact_ts.exists():
+        candidates.append(exact_ts)
+
+    # B) buscar en checkpoint y checkpoints
+    for sub in ["checkpoint", "checkpoints"]:
+        p = local_dir / "artifacts" / sub
+        if p.exists():
+            candidates += list(p.rglob("*.pt")) + list(p.rglob("*.pth"))
+
+    # C) si aún nada, buscar en todo mlflow_model
+    if local_dir.exists():
+        candidates += [p for p in local_dir.rglob("*.pt")] + [p for p in local_dir.rglob("*.pth")]
+
+    # Intentar TorchScript primero
+    for p in candidates:
         try:
+            m = torch.jit.load(str(p), map_location="cpu")
+            m.eval()
+            st.caption(f"🧠 Cargado TorchScript: `{p.as_posix()}`")
+            return m
+        except Exception:
+            continue
+
+    # D) Último recurso: export de MLflow como PyTorch (NO PyFunc)
+    try:
+        if (local_dir / "MLmodel").exists():
             m = mlflow.pytorch.load_model(str(local_dir))
             m.eval()
             m.to("cpu")
+            st.warning("Se cargó el export PyTorch de MLflow (no TorchScript). "
+                       "Si ves errores de `MLP + Tensor`, sube el TorchScript .pt.")
             return m
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-        # B) Intentar TorchScript dentro del export local (data/, artifacts/, etc.)
-        try:
-            # Busca .pt / .pth razonables
-            candidates = list((local_dir / "artifacts").rglob("*.pt")) + \
-                         list((local_dir / "artifacts").rglob("*.pth")) + \
-                         list((local_dir / "data").rglob("*.pt")) + \
-                         list((local_dir / "data").rglob("*.pth"))
-            for p in candidates:
-                try:
-                    m = torch.jit.load(str(p), map_location="cpu")
-                    m.eval()
-                    return m
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-    # C) Intentar desde el run en el tracking local
     if run_id:
         try:
             m = mlflow.pytorch.load_model(f"runs:/{run_id}/model")
             m.eval()
             m.to("cpu")
+            st.warning("Se cargó runs:/<run_id>/model (no TorchScript). "
+                       "Si ves errores de `MLP + Tensor`, sube el TorchScript .pt.")
             return m
         except Exception:
             pass
 
-    # D) Intentar TorchScript suelto en models/artifacts/checkpoint/*.pt
-    try:
-        ckpt_dir = MODELS_DIR / "mlflow_model" / "artifacts" / "checkpoint"
-        if ckpt_dir.exists():
-            for p in ckpt_dir.rglob("*.pt"):
-                try:
-                    m = torch.jit.load(str(p), map_location="cpu")
-                    m.eval()
-                    return m
-                except Exception:
-                    continue
-    except Exception:
-        pass
-
-    st.error("No se pudo cargar el modelo como PyTorch/TorchScript. Revisa 'models/mlflow_model'.")
+    st.error(
+        "No encontré un TorchScript (.pt/.pth) válido. "
+        "Asegúrate de versionar `models/mlflow_model/artifacts/checkpoints/best_phase2_run_09.pt`."
+    )
     raise RuntimeError("Modelo no disponible")
+
 
 @st.cache_resource(show_spinner=False)
 def fit_scaler_on_train(columns_order):
@@ -248,27 +251,16 @@ def _torch_try_forward(mod, x_t: "torch.Tensor"):
 
 def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
     """
-    Solo rutas Torch (nn.Module o TorchScript). Evita PyFunc/predict.
-    Probamos variantes de llamada y de forma para el tensor.
-    Normalizamos a prob con sigmoide si detectamos logits.
+    Predicción SOLO con Torch (TorchScript o nn.Module).
     """
-    x_base = torch.tensor(X_np.astype(np.float32))
+    x = torch.tensor(X_np.astype(np.float32), device="cpu")
 
-    # candidato de tensores a probar: shape y contenedores
-    tensor_variants = [
-        x_base,
-        x_base.float(),
-        x_base.squeeze(0),
-        x_base.unsqueeze(0),
-    ]
-
-    def _as_probs(y: np.ndarray) -> np.ndarray:
+    def to_probs(y: np.ndarray) -> np.ndarray:
         y = y.reshape(-1)
         if y.min() < 0.0 or y.max() > 1.0:
             y = 1.0 / (1.0 + np.exp(-y))
         return y
 
-    # Caso 1: TorchScript (ScriptModule) o nn.Module
     try:
         model.eval()
     except Exception:
@@ -279,37 +271,45 @@ def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
         pass
 
     with torch.no_grad():
-        for x in tensor_variants:
-            # Llamadas directas
-            try:
-                out = model(x)
-                if isinstance(out, (list, tuple)):
-                    out = out[0]
-                out_np = out.detach().cpu().numpy()
-                return _as_probs(out_np)
-            except Exception:
-                pass
-            # Llamadas con dicts típicos
-            for key in ("x", "inputs", "input"):
-                try:
-                    out = model({key: x})
-                    if isinstance(out, (list, tuple)):
-                        out = out[0]
-                    out_np = out.detach().cpu().numpy()
-                    return _as_probs(out_np)
-                except Exception:
-                    pass
-            # Llamada como tupla
-            try:
-                out = model((x,))
-                if isinstance(out, (list, tuple)):
-                    out = out[0]
-                out_np = out.detach().cpu().numpy()
-                return _as_probs(out_np)
-            except Exception:
-                pass
+        # 1) forward(x)
+        try:
+            out = model(x)
+            if isinstance(out, (list, tuple)):
+                out = out[0]
+            return to_probs(out.detach().cpu().numpy())
+        except Exception as e1:
+            err1 = e1
+        # 2) forward((x,))
+        try:
+            out = model((x,))
+            if isinstance(out, (list, tuple)):
+                out = out[0]
+            return to_probs(out.detach().cpu().numpy())
+        except Exception as e2:
+            err2 = e2
+        # 3) forward({'x': x})
+        try:
+            out = model({"x": x})
+            if isinstance(out, (list, tuple)):
+                out = out[0]
+            return to_probs(out.detach().cpu().numpy())
+        except Exception as e3:
+            err3 = e3
+        # 4) forward({'inputs': x})
+        try:
+            out = model({"inputs": x})
+            if isinstance(out, (list, tuple)):
+                out = out[0]
+            return to_probs(out.detach().cpu().numpy())
+        except Exception as e4:
+            err4 = e4
 
-    raise TypeError(f"No se pudo inferir con Torch. Tipo de modelo: {type(model)}")
+    raise TypeError(
+        "No se pudo inferir con Torch. Es muy probable que el objeto cargado NO sea TorchScript. "
+        "Sube y usa el archivo `.pt` TorchScript (ej: `models/mlflow_model/artifacts/checkpoints/best_phase2_run_09.pt`).\n\n"
+        f"Últimos intentos:\n - {type(err1).__name__}: {err1}\n - {type(err2).__name__}: {err2}\n"
+        f" - {type(err3).__name__}: {err3}\n - {type(err4).__name__}: {err4}"
+    )
 
 def log_inference(rows_df: pd.DataFrame, probs: np.ndarray, preds: np.ndarray, threshold: float):
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
