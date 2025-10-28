@@ -80,13 +80,20 @@ El modelo base es una **red neuronal multicapa (MLP)** desarrollada en **PyTorch
 
 ---
 
-## ⚙️ Entrenamiento
+## ⚙️ Modelo ganador
 
 - **Optimización:** Adam  
-- **Función de pérdida:** Binary Cross Entropy  
-- **Épocas:** XX  
-- **Batch size:** XX  
-- **Semilla aleatoria:** 42  
+- **hidden_layers**: [256, 128, 64].
+- **Activation**: ReLU
+- **dropout**: 0.50
+- **batch_norm**: false,
+- **Optimizer**: "adam",
+- **lr**: 1e-1,
+- **Weight_decay**: 5e-4,
+- **Batch_size**: 24,
+- **Epochs**: 80,
+- **Early_stopping_patience**: 15
+
 
 **Monitoreo:**  
 El proceso se registró en **MLflow** con métricas de validación por época.
@@ -117,7 +124,7 @@ El proceso se registró en **MLflow** con métricas de validación por época.
 | Accuracy | 0.8522 |
 | Precision | 0.2640 |
 | Recall | 0.6778 |
-| F1-Score | 0.3800 |
+| F1-Score | 0.4350 |
 | AUC-ROC | 0.8624 |
 
 > Se seleccionó F1 Score como métrica principal porque el dataset es altamente desbalanceado (la clase positiva es minoritaria).
