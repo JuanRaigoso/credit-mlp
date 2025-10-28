@@ -11,10 +11,10 @@ import streamlit as st
 import mlflow
 import mlflow.pytorch
 import mlflow.pyfunc
-from mlflow.pyfunc import PyFuncModel  # 👈 NUEVO
+from mlflow.pyfunc import PyFuncModel  # 👈 IMPORTANTE
 
 import torch
-from torch import nn  # 👈 NUEVO
+from torch import nn  # 👈 IMPORTANTE
 from sklearn.preprocessing import StandardScaler
 
 try:
@@ -91,55 +91,54 @@ def load_columns_used():
 @st.cache_resource(show_spinner=False)
 def load_model(run_id: str):
     """
-    Intenta en orden:
-    1) models/mlflow_model (export local) → primero Torch, luego PyFunc
-    2) runs:/<run_id>/model → Torch o PyFunc
-    3) (opcional) models:/credit_risk_mlp_v3/Production si hay MLFLOW_TRACKING_URI
+    Preferimos PyFunc para evitar forwards específicos de nn.Module.
+    Orden:
+    1) models/mlflow_model (PyFunc -> Torch)
+    2) runs:/<run_id>/model (PyFunc -> Torch)
+    3) models:/credit_risk_mlp_v3/Production (PyFunc -> Torch) si hay MLFLOW_TRACKING_URI
     """
     local_dir = MODELS_DIR / "mlflow_model"
 
     # A) Export local
     if (local_dir / "MLmodel").exists():
-        # 1) Torch
+        try:
+            return mlflow.pyfunc.load_model(str(local_dir))
+        except Exception:
+            pass
         try:
             m = mlflow.pytorch.load_model(str(local_dir))
             m.eval()
             return m
-        except Exception:
-            pass
-        # 2) PyFunc
-        try:
-            m = mlflow.pyfunc.load_model(str(local_dir))
-            return m
         except Exception as e:
-            st.error(f"No se pudo cargar modelo local (torch/pyfunc). Detalle: {e}")
+            st.error(f"No se pudo cargar modelo local. Detalle: {e}")
             raise
 
-    # B) Run directo
-    try:
-        m = mlflow.pytorch.load_model(f"runs:/{run_id}/model")
-        m.eval()
-        return m
-    except Exception:
+    # B) runs:/<run_id>/model
+    if run_id:
         try:
-            m = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
+            return mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
+        except Exception:
+            pass
+        try:
+            m = mlflow.pytorch.load_model(f"runs:/{run_id}/model")
+            m.eval()
             return m
         except Exception:
             pass
 
     # C) Registry (opcional)
-    try:
-        if os.environ.get("MLFLOW_TRACKING_URI"):
-            try:
-                m = mlflow.pytorch.load_model("models:/credit_risk_mlp_v3/Production")
-                m.eval()
-                return m
-            except Exception:
-                m = mlflow.pyfunc.load_model("models:/credit_risk_mlp_v3/Production")
-                return m
-    except Exception as e:
-        st.error(f"No se pudo cargar modelo del registry. Detalle: {e}")
-        raise
+    if os.environ.get("MLFLOW_TRACKING_URI"):
+        try:
+            return mlflow.pyfunc.load_model("models:/credit_risk_mlp_v3/Production")
+        except Exception:
+            pass
+        try:
+            m = mlflow.pytorch.load_model("models:/credit_risk_mlp_v3/Production")
+            m.eval()
+            return m
+        except Exception as e:
+            st.error(f"No se pudo cargar modelo del registry. Detalle: {e}")
+            raise
 
     st.error("No se pudo cargar ningún modelo (local/runs/registry). Revisa models/mlflow_model.")
     raise RuntimeError("Modelo no disponible")
@@ -197,12 +196,25 @@ def to_sigmoid(x: np.ndarray) -> np.ndarray:
 
 def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
     """
-    Soporta:
-    - nn.Module (Torch): model(tensor)
-    - PyFunc (MLflow): model.predict(DataFrame/ndarray)
-    Retorna probabilidades en [0,1] (si detecta logits, aplica sigmoide).
+    1) Si el modelo tiene .predict (PyFunc) -> úsalo (preferimos DataFrame con nombres)
+    2) Si no, y es nn.Module -> usar forward con Tensor
+    Devuelve probabilidades en [0,1] (si detecta logits aplica sigmoide).
     """
-    # ✅ Caso 1: Torch nn.Module
+    # ✅ Intento 1: PyFunc (lo preferimos)
+    if hasattr(model, "predict") or isinstance(model, PyFuncModel):
+        try:
+            df = pd.DataFrame(X_np, columns=columns_order)
+            out = model.predict(df)
+        except Exception:
+            out = model.predict(X_np)
+        out_np = np.array(out).reshape(-1)
+        if out_np.size == 0:
+            raise ValueError("Modelo PyFunc devolvió salida vacía")
+        if out_np.min() < 0.0 or out_np.max() > 1.0:
+            out_np = to_sigmoid(out_np)
+        return out_np
+
+    # ✅ Intento 2: Torch nn.Module
     if isinstance(model, nn.Module):
         with torch.no_grad():
             x_t = torch.tensor(X_np.astype(np.float32))
@@ -214,20 +226,7 @@ def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
                 out_np = to_sigmoid(out_np)
             return out_np
 
-    # ✅ Caso 2: PyFunc de MLflow
-    if isinstance(model, PyFuncModel) or hasattr(model, "predict"):
-        # preferimos DataFrame con nombres correctos
-        try:
-            df = pd.DataFrame(X_np, columns=columns_order)
-            out = model.predict(df)
-        except Exception:
-            out = model.predict(X_np)
-        out_np = np.array(out).reshape(-1)
-        if out_np.min() < 0.0 or out_np.max() > 1.0:
-            out_np = to_sigmoid(out_np)
-        return out_np
-
-    # Fallback defensivo (no debería ocurrir)
+    # Fallback defensivo
     raise TypeError(f"Tipo de modelo no soportado: {type(model)}")
 
 
