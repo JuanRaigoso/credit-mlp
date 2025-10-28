@@ -137,7 +137,7 @@ El F1 equilibra precisión y recall, permitiendo evaluar de forma justa la capac
 
 | Loss | ROC-AUC | ROC-CURVE|
 |------|-----------| -----------|
-| ![Training Loss](reports/phase2_run_09_loss.png)| ![Accuracy Curve](reports/phase2_run_09_auc.png) |![ROC Curve](reports/phase2_run_09_v3_roc_curve.png) |
+| ![Training Loss](reports/phase2_run_09_loss.png)| ![Accuracy Curve](reports/phase2_run_09_auc.png)| ![ROC Curve](reports/phase2_run_09_v3_roc_curve.png)|
 
 > Las curvas muestran una convergencia estable y sin sobreajuste significativo.
 
