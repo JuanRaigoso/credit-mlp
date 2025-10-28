@@ -291,115 +291,243 @@ def log_inference(rows_df: pd.DataFrame, probs: np.ndarray, preds: np.ndarray, t
 # UI
 # ----------------------------
 def main():
-    st.set_page_config(page_title="Evaluador de Riesgo Crediticio", page_icon="📊", layout="centered")
+    # ============================
+    # CONFIG + THEME (Dark)
+    # ============================
+    st.set_page_config(
+        page_title="credit-mlp · Evaluador de Riesgo Crediticio",
+        page_icon="🏦",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
 
-    # Estilos mínimos
+    # ============================
+    # GLOBAL STYLES (Dark UI)
+    # ============================
     st.markdown(
         """
         <style>
-        .small { font-size: 0.85rem; color: #888; }
-        .oktag { background:#1f6feb; color:white; padding:2px 6px; border-radius:6px; }
-        .pill { background:#30363d; color:#c9d1d9; padding:2px 6px; border-radius:999px; }
-        .card { padding:14px 16px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; }
+            :root {
+                --bg: #0b1220;           /* fondo app */
+                --panel: #121a2b;        /* paneles/cards */
+                --panel-2: #0e1626;      /* paneles secundarios */
+                --text: #e5e7eb;         /* texto principal */
+                --muted: #9aa4b2;        /* texto secundario */
+                --primary: #60a5fa;      /* azul */
+                --success: #34d399;      /* verde */
+                --warning: #fbbf24;      /* amarillo */
+                --danger: #f87171;       /* rojo */
+                --border: #1f2a44;       /* bordes */
+                --chip-bg: #0d2547;      /* fondo chip */
+            }
+
+            html, body, [data-testid="stAppViewContainer"] {
+                background: var(--bg);
+                color: var(--text);
+                font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial;
+            }
+
+            /* Cards */
+            .card {
+                background: var(--panel);
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                padding: 18px 18px;
+            }
+            .card-soft {
+                background: var(--panel-2);
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                padding: 18px 18px;
+            }
+
+            /* Chips / Pills */
+            .pill {
+                display: inline-flex; align-items:center; gap:8px;
+                padding: 6px 10px;
+                background: var(--chip-bg);
+                border: 1px solid var(--border);
+                color: var(--text);
+                border-radius: 999px;
+                font-size: 0.85rem;
+            }
+            .pill .dot { width:8px; height:8px; border-radius:999px; display:inline-block; }
+
+            /* Headline */
+            .hero h1 { margin: 0; font-size: 1.85rem; font-weight: 700; letter-spacing: .2px; }
+            .hero p  { margin: 4px 0 0 0; color: var(--muted); }
+
+            /* Progress bar custom (risk bar) */
+            .riskbar {
+                width: 100%; height: 18px;
+                background: linear-gradient(90deg, rgba(52,211,153,0.15), rgba(96,165,250,0.15), rgba(248,113,113,0.15));
+                border: 1px solid var(--border);
+                border-radius: 99px;
+                position: relative;
+                overflow: hidden;
+            }
+            .riskbar-fill {
+                height: 100%;
+                border-radius: 99px;
+                transition: width .35s ease;
+            }
+
+            /* Badges result */
+            .result-ok     { background: rgba(52,211,153,0.12); border: 1px solid rgba(52,211,153,0.35); }
+            .result-warn   { background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.35); }
+            .result-danger { background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.35); }
+
+            /* Tables (make header sticky look darker) */
+            .stDataFrame, .stTable { filter: saturate(1.02) contrast(1.02); }
+            .small   { color: var(--muted); font-size: 0.9rem; }
+            .smaller { color: var(--muted); font-size: 0.8rem; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.title("Evaluador de Riesgo Crediticio 💰🏦")
-    st.caption("Estima la probabilidad de **morosidad ≥ 90 días** con base en información del solicitante. Esta es una **herramienta de apoyo**.")
+    # ============================
+    # HEADER
+    # ============================
+    c_logo, c_title, c_kpis = st.columns([0.1, 0.65, 0.25], gap="small")
+    with c_logo:
+        st.markdown(
+            """
+            <div class="pill">
+                <span class="dot" style="background:#60a5fa;"></span>
+                credit-mlp
+            </div>
+            """, unsafe_allow_html=True
+        )
+    with c_title:
+        st.markdown(
+            """
+            <div class="hero">
+                <h1>Evaluador de Riesgo Crediticio</h1>
+                <p>Modelo MLP (PyTorch/MLflow) para estimar probabilidad de morosidad ≥ 90 días.</p>
+            </div>
+            """, unsafe_allow_html=True
+        )
 
-    # Cargar artefactos base
+    # ============================
+    # LOAD ARTIFACTS (same logic)
+    # ============================
     run_id = read_text(RUN_ID_PATH, default=None)
     threshold = read_text(THRESHOLD_PATH, default=0.5, to_float=True)
     columns_order = load_columns_used()
 
-    c0, c1, c2 = st.columns([1.2, 1, 1])
-    with c0:
-        # Texto más claro para el modelo en uso
-        st.markdown(f"**Modelo en uso:** <span class='pill'>{run_id or 'NO DEFINIDO'}</span>", unsafe_allow_html=True)
-    with c1:
-        st.markdown(f"**Umbral operativo:** <span class='pill'>{threshold:.4f}</span>", unsafe_allow_html=True)
-    with c2:
-        if st.button("🔄 Recargar artefactos"):
-            # Limpiar cachés y recargar
+    with c_kpis:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.metric("Umbral operativo", f"{threshold:.2f}")
+        st.caption("Las solicitudes con probabilidad ≥ umbral se clasifican como **Riesgo**.")
+        reload_btn = st.button("🔄 Recargar artefactos", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        if reload_btn:
             load_model.clear()
             fit_scaler_on_train.clear()
             st.rerun()
 
-    # Nota: en modo offline podemos no requerir run_id, pero lo mostramos si existe.
+    # Load model & scaler (no changes)
     model = load_model(run_id or "")
     scaler = fit_scaler_on_train(columns_order)
 
-    st.markdown("---")
-    st.subheader("🔹 Ingreso manual (un registro)")
-    st.caption("Completa los campos y presiona **Evaluar solicitud**. Los campos numéricos van **sin símbolos** (p. ej., sin $).")
+    # MODEL TAGS ROW
+    st.markdown(
+        f"""
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+            <div class="pill"><span class="dot" style="background:#34d399;"></span> Modelo: <b>{run_id or 'NO DEFINIDO'}</b></div>
+            <div class="pill"><span class="dot" style="background:#60a5fa;"></span> Features: <b>{len(columns_order)}</b></div>
+            <div class="pill"><span class="dot" style="background:#9aa4b2;"></span> TorchScript</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("")
+
+    # ============================
+    # TABS
+    # ============================
+    tab1, tab2 = st.tabs(["🧮 Simulador individual", "📁 Scoring por archivo (CSV)"])
 
     # ----------------------------
-    # 🔽 🔽 🔽 SECCIÓN: PREDICCIÓN MANUAL
+    # TAB 1: PREDICCIÓN MANUAL
     # ----------------------------
-    with st.form("manual_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            RevolvingUtilizationOfUnsecuredLines = st.number_input(
-                "Utilización de líneas no garantizadas (0–1)",
-                min_value=0.0, max_value=1.0, step=0.01, format="%0.4f", value=0.01,
-                help="Saldo total en tarjetas/líneas de crédito personales dividido por límites totales (excluye hipotecas y deudas a plazos)."
-            )
-            age = st.number_input(
-                "Edad del solicitante (años)",
-                min_value=18, step=1, value=35,
-                help="Mínimo 18 años."
-            )
-            NumberOfTime30_59 = st.number_input(
-                "Núm. atrasos en pagos durante los últimos 30–59 días",
-                min_value=0, step=1, value=2,
-                help="Número de veces que el prestatario ha tenido un retraso de pago de 30 a 59 días."
-            )
-            DebtRatio = st.number_input(
-                "Relación de deuda",
-                min_value=0.0, step=0.01, format="%0.4f", value=0.20,
-                help="(Pagos de deuda + pensión + costos de vida) / Ingreso bruto mensual."
-            )
-            MonthlyIncome = st.number_input(
-                "Ingreso mensual (USD)",
-                min_value=0.0, step=100.0, value=2500.0, format="%0.2f",
-                help="Monto total de ingresos mensuales declarados."
-            )
-            NumberOfOpenCreditLinesAndLoans = st.number_input(
-                "Núm. líneas/préstamos abiertos",
-                min_value=0, step=1, value=1,
-                help="Total de tarjetas, préstamos de auto/hipoteca, etc. que están abiertos."
-            )
-        with c2:
-            NumberOfTimes90DaysLate = st.number_input(
-                "Núm. atrasos ≥ 90 días",
-                min_value=0, step=1, value=1,
-                help="Veces con retrasos de 90 días o más."
-            )
-            NumberRealEstateLoansOrLines = st.number_input(
-                "Núm. hipotecas/líneas inmobiliarias",
-                min_value=0, step=1, value=1,
-                help="Incluye créditos sobre el valor de la vivienda."
-            )
-            NumberOfTime60_89 = st.number_input(
-                "Núm. atrasos 60–89 días",
-                min_value=0, step=1, value=1,
-                help="Veces con retrasos entre 60 y 89 días."
-            )
-            NumberOfDependents = st.number_input(
-                "Núm. de dependientes",
-                min_value=0, step=1, value=2,
-                help="Personas a cargo (cónyuge, hijos, etc.)."
-            )
-            sex = st.selectbox(
-                "Sexo (según registro)",
-                ["female", "male"], index=1,
-                help="Sexo del solicitante (Hombre/Mujer) (Male/Female)."
-            )
-            Sex_num = 1.0 if sex == "male" else 0.0
+    with tab1:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("Completa los campos del solicitante", anchor=False)
+        st.caption("Usa valores sin símbolos (p. ej., sin $). Los tooltips explican cada campo.")
 
-        submitted = st.form_submit_button("Evaluar solicitud")
+        with st.form("manual_form_ui", border=False):
+            c1, c2, c3 = st.columns([1, 1, 1], gap="large")
+
+            with c1:
+                RevolvingUtilizationOfUnsecuredLines = st.slider(
+                    "Utilización de líneas no garantizadas",
+                    min_value=0.00, max_value=1.00, value=0.10, step=0.01,
+                    help="Saldo total en tarjetas/líneas de crédito personales dividido por límites totales (0–1)."
+                )
+                age = st.slider(
+                    "Edad del solicitante (años)",
+                    min_value=18, max_value=85, value=35, step=1,
+                    help="Mínimo 18 años."
+                )
+                NumberOfTime30_59 = st.number_input(
+                    "Atrasos 30–59 días (veces)",
+                    min_value=0, value=1, step=1,
+                    help="Número de veces con retrasos de pago de 30 a 59 días."
+                )
+                DebtRatio = st.slider(
+                    "Relación de deuda",
+                    min_value=0.00, max_value=2.50, value=0.20, step=0.01,
+                    help="(Pagos de deudas + pensión + costos de vida) / Ingreso bruto mensual."
+                )
+
+            with c2:
+                MonthlyIncome = st.number_input(
+                    "Ingreso mensual (USD)",
+                    min_value=0.0, value=2500.0, step=100.0, format="%0.2f",
+                    help="Monto total de ingresos mensuales declarados."
+                )
+                NumberOfOpenCreditLinesAndLoans = st.slider(
+                    "Líneas/préstamos abiertos",
+                    min_value=0, max_value=40, value=3, step=1,
+                    help="Total de tarjetas, préstamos de auto/hipoteca, etc., que están abiertos."
+                )
+                NumberOfTimes90DaysLate = st.number_input(
+                    "Atrasos ≥ 90 días (veces)",
+                    min_value=0, value=0, step=1,
+                    help="Número de veces con retrasos de 90 días o más."
+                )
+                NumberRealEstateLoansOrLines = st.slider(
+                    "Hipotecas/líneas inmobiliarias",
+                    min_value=0, max_value=10, value=1, step=1,
+                    help="Incluye créditos sobre el valor de la vivienda."
+                )
+
+            with c3:
+                NumberOfTime60_89 = st.number_input(
+                    "Atrasos 60–89 días (veces)",
+                    min_value=0, value=0, step=1,
+                    help="Número de veces con retrasos entre 60 y 89 días."
+                )
+                NumberOfDependents = st.slider(
+                    "Número de dependientes",
+                    min_value=0, max_value=10, value=1, step=1,
+                    help="Personas a cargo (cónyuge, hijos, etc.)."
+                )
+                sex = st.selectbox(
+                    "Sexo (según registro)",
+                    ["female", "male"], index=1,
+                    help="Sexo del solicitante (Hombre/Mujer) (Male/Female)."
+                )
+                Sex_num = 1.0 if sex == "male" else 0.0
+
+            submitted = st.form_submit_button("⚡ Evaluar solicitud", use_container_width=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)  # /card
+
+        # ==== RESULTADOS ====
         if submitted:
             row = {
                 "RevolvingUtilizationOfUnsecuredLines": RevolvingUtilizationOfUnsecuredLines,
@@ -414,124 +542,180 @@ def main():
                 "NumberOfDependents": NumberOfDependents,
                 "Sex_num": Sex_num,
             }
+
             X = pd.DataFrame([row])
-            # Sanitización + orden de columnas
-            X = ensure_columns(X, columns_order)
-            X = X.fillna(0.0).replace([np.inf, -np.inf], 0.0)
-            # Escalado
+            X = ensure_columns(X, columns_order).fillna(0.0).replace([np.inf, -np.inf], 0.0)
             Xs = scaler.transform(X.values.astype(np.float32))
-            # Predicción robusta
             probs = predict_scores(model, Xs, columns_order)
             prob = float(probs[0])
             yhat = int(prob >= threshold)
 
-            # === Render amigable ===
-            pct_text = f"{prob*100:.2f}%"
-            st.markdown(
-                f"""
-                <div class="card">
-                    <div style="display:flex;gap:8px;align-items:center;">
-                        <span class="oktag">Probabilidad estimada</span>
-                        <span class="small">La probabilidad se expresa 0–100% (p. ej. 75.00% = 0.7500)</span>
-                    </div>
-                    <h3 style="margin:8px 0 0 0;">Morosidad (≥ 90 días): {pct_text}</h3>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            # Colors based on prob
+            def risk_color(p):
+                if p < 0.33: return "var(--success)"
+                if p < 0.66: return "var(--warning)"
+                return "var(--danger)"
 
-            if yhat == 1:
+            # RISK HEADER
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            cA, cB = st.columns([0.6, 0.4], gap="large")
+
+            with cA:
+                pct_text = f"{prob*100:.2f}%"
+                st.markdown("#### Resultado del modelo")
                 st.markdown(
                     f"""
-                    <div class="card" style="border:1px solid #ef444433;background:#fef2f2;">
-                        <strong>Decisión del modelo:</strong> Riesgo (clase 1)<br/>
-                        <strong>Interpretación:</strong> Probabilidad alta de incumplimiento.<br/>
-                        <strong>Recomendación operativa:</strong> No aprobar el crédito o solicitar garantías adicionales (según política).
-                        <p class="small">Umbral usado por el modelo: {threshold:.4f}. Se marca "Riesgo" cuando probabilidad ≥ umbral.</p>
+                    <div class="riskbar">
+                        <div class="riskbar-fill" style="width:{prob*100:.2f}%; background:{risk_color(prob)};"></div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+                        <div class="pill">
+                            <span class="dot" style="background:{risk_color(prob)};"></span>
+                            Probabilidad estimada: <b>{pct_text}</b>
+                        </div>
+                        <div class="pill">
+                            Umbral: <b>{threshold:.2f}</b>
+                        </div>
                     </div>
                     """,
-                    unsafe_allow_html=True
-                )
-            else:
-                st.markdown(
-                    f"""
-                    <div class="card" style="border:1px solid #22c55e33;background:#f0fdf4;">
-                        <strong>Decisión del modelo:</strong> No riesgo (clase 0)<br/>
-                        <strong>Interpretación:</strong> Probabilidad baja de incumplimiento.<br/>
-                        <strong>Recomendación operativa:</strong> Se puede considerar aprobación siguiendo políticas y verificaciones.
-                        <p class="small">Umbral usado por el modelo: {threshold:.4f}. Se marca "No riesgo" cuando probabilidad &lt; umbral.</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
 
-            # Log de inferencia unitaria
+            with cB:
+                if yhat == 1:
+                    st.markdown(
+                        """
+                        <div class="card-soft result-danger">
+                            <h4>🚫 Decisión: <b>Riesgo</b></h4>
+                            <p class="small">Interpretación: probabilidad alta de incumplimiento.</p>
+                            <p class="smaller">Recomendación: no aprobar, o solicitar garantías adicionales según política.</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        """
+                        <div class="card-soft result-ok">
+                            <h4>✅ Decisión: <b>No riesgo</b></h4>
+                            <p class="small">Interpretación: probabilidad baja de incumplimiento.</p>
+                            <p class="smaller">Recomendación: proceder con proceso de aprobación conforme a políticas.</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+            st.markdown('</div>', unsafe_allow_html=True)  # /card
+
+            # LOG (no cambia)
             try:
                 log_inference(pd.DataFrame([row]), np.array([prob]), np.array([yhat]), threshold)
             except Exception:
                 pass
 
-    st.markdown("---")
-    st.subheader("🔹 Scoring por archivo (CSV)")
-    st.write("Formato esperado (columnas, sin objetivo):")
-    st.code(",".join(columns_order), language="text")
+            # AYUDA/NOTAS
+            with st.expander("ℹ️ Trazabilidad y notas del modelo"):
+                st.write(
+                    "- El score es una probabilidad en 0–1.\n"
+                    "- La decisión binaria usa el umbral operativo.\n"
+                    "- Esta herramienta es de apoyo; no reemplaza verificación documental ni políticas."
+                )
 
-    # Botón de plantilla CSV
-    tpl = pd.DataFrame(columns=columns_order)
-    st.download_button(
-        "Descargar plantilla CSV",
-        data=tpl.to_csv(index=False).encode("utf-8"),
-        file_name="plantilla_credit_mlp.csv",
-        mime="text/csv"
-    )
+    # ----------------------------
+    # TAB 2: CSV / BATCH
+    # ----------------------------
+    with tab2:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("Carga masiva (CSV)", anchor=False)
+        st.caption("El archivo debe incluir las columnas de entrada en el mismo orden. Puedes usar la plantilla.")
 
-    file = st.file_uploader("Sube un CSV con las columnas de entrada", type=["csv"])
-    if file is not None:
-        try:
-            df_in = pd.read_csv(file)
-            # mapear sex si viniera como 'Sex'
-            if "Sex" in df_in.columns and "Sex_num" not in df_in.columns:
-                df_in["Sex_num"] = df_in["Sex"].map({"male": 1, "female": 0}).fillna(0).astype(float)
+        with st.expander("Ver columnas esperadas"):
+            st.code(",".join(columns_order), language="text")
 
-            # Sanitización + orden
-            df_in = ensure_columns(df_in, columns_order)
-            df_in = df_in.fillna(0.0).replace([np.inf, -np.inf], 0.0)
-            # Escalado
-            Xs = scaler.transform(df_in.values.astype(np.float32))
-            # Predicción robusta
-            probs = predict_scores(model, Xs, columns_order)
-            preds = (probs >= threshold).astype(int)
-
-            out = df_in.copy()
-            out["prob_default"] = probs
-            out["prediction"] = preds
-
-            st.write("Vista previa (primeras 20 filas):")
-            st.dataframe(out.head(20), use_container_width=True)
-
-            INFERENCE_DIR.mkdir(parents=True, exist_ok=True)
-            out_path = INFERENCE_DIR / "batch_predictions.csv"
-            out.to_csv(out_path, index=False)
-            st.success(f"Predicciones guardadas en: {out_path.as_posix()}")
-
-            # Log de inferencias por lote
-            try:
-                log_inference(df_in, probs, preds, threshold)
-            except Exception:
-                pass
-
-        except Exception as e:
-            st.error(f"Error procesando el archivo: {e}")
-
-    # Sidebar de ayuda
-    with st.sidebar:
-        st.header("ℹ️ Acerca de esta demo")
-        st.markdown(
-            """
-            Herramienta para ilustrar un flujo de **evaluación de riesgo crediticio** con MLP (PyTorch + MLflow).
-            """
+        # Botón de plantilla CSV
+        tpl = pd.DataFrame(columns=columns_order)
+        st.download_button(
+            "⬇️ Descargar plantilla CSV",
+            data=tpl.to_csv(index=False).encode("utf-8"),
+            file_name="plantilla_credit_mlp.csv",
+            mime="text/csv",
+            use_container_width=True
         )
-        st.markdown("**Soporte:** Verifica que existan:\n- `models/mlflow_model/MLmodel`\n- `models/run_id.txt`\n- `models/threshold.txt`\n- `models/columns_used.json`")
+
+        file = st.file_uploader("Sube un CSV con las columnas de entrada", type=["csv"], label_visibility="collapsed")
+
+        st.markdown('</div>', unsafe_allow_html=True)  # /card
+
+        if file is not None:
+            try:
+                df_in = pd.read_csv(file)
+
+                # mapear 'Sex' -> 'Sex_num' si aplica
+                if "Sex" in df_in.columns and "Sex_num" not in df_in.columns:
+                    df_in["Sex_num"] = df_in["Sex"].map({"male": 1, "female": 0}).fillna(0).astype(float)
+
+                df_in = ensure_columns(df_in, columns_order).fillna(0.0).replace([np.inf, -np.inf], 0.0)
+                Xs = scaler.transform(df_in.values.astype(np.float32))
+                probs = predict_scores(model, Xs, columns_order)
+                preds = (probs >= threshold).astype(int)
+
+                out = df_in.copy()
+                out["prob_default"] = probs
+                out["prediction"] = preds
+
+                # KPIs lote
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                n_total = len(out)
+                n_risk = int((out["prediction"] == 1).sum())
+                n_ok = n_total - n_risk
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total registros", f"{n_total}")
+                c2.metric("No riesgo", f"{n_ok}")
+                c3.metric("Riesgo", f"{n_risk}")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # Vista previa y descarga
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                st.write("Vista previa (primeras 20 filas):")
+                st.dataframe(out.head(20), use_container_width=True)
+                INFERENCE_DIR.mkdir(parents=True, exist_ok=True)
+                out_path = INFERENCE_DIR / "batch_predictions.csv"
+                out.to_csv(out_path, index=False)
+                st.success(f"Predicciones guardadas en: {out_path.as_posix()}")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # Log batch
+                try:
+                    log_inference(df_in, probs, preds, threshold)
+                except Exception:
+                    pass
+
+                # Distribución simple (opcional)
+                with st.expander("📊 Distribución de probabilidades (resumen rápido)"):
+                    bins = pd.cut(out["prob_default"], bins=[0, 0.2, 0.4, 0.6, 0.8, 1.0])
+                    st.bar_chart(bins.value_counts().sort_index())
+
+            except Exception as e:
+                st.error(f"Error procesando el archivo: {e}")
+
+    # ----------------------------
+    # SIDEBAR
+    # ----------------------------
+    with st.sidebar:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.header("ℹ️ Acerca de")
+        st.write(
+            "Dashboard de **scoring crediticio** con MLP (PyTorch + MLflow). "
+            "Orientado a uso demostrativo y apoyo a decisión."
+        )
+        st.divider()
+        st.subheader("Soporte")
+        st.markdown(
+            "- `models/mlflow_model/MLmodel`\n"
+            "- `models/run_id.txt`\n"
+            "- `models/threshold.txt`\n"
+            "- `models/columns_used.json`"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
