@@ -1,12 +1,9 @@
-mkdir -p .streamlit
-cat > .streamlit/config.toml << 'EOF'
 [client]
 showSidebarNavigation = false
 
 [theme]
-base="light"
-primaryColor="#1f6feb"
-backgroundColor="#ffffff"
-secondaryBackgroundColor="#f6f8fa"
-textColor="#24292f"
-EOF
+base = "light"
+primaryColor = "#1f6feb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f6f8fa"
+textColor = "#24292f"
