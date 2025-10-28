@@ -1,6 +1,8 @@
+import os
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -8,16 +10,24 @@ import streamlit as st
 
 import mlflow
 import mlflow.pytorch
+
+# torch es opcional para el flavor pyfunc, pero lo usamos si el modelo es nn.Module
 import torch
 from sklearn.preprocessing import StandardScaler
 
+try:
+    import joblib
+except Exception:
+    joblib = None
+
 # ==========================================================
-# App Credit Risk MLP (versión en ESPAÑOL + mejoras de UX)
+# App Credit Risk MLP (versión en ESPAÑOL + UX + robustez)
 # ==========================================================
-# - Botón de recarga de artefactos
-# - Textos y etiquetas en español
+# - Carga de modelo robusta: Torch o PyFunc (offline primero)
+# - Scaler a prueba de fallos (scaler.pkl / train_clean.csv / Identity)
+# - Sanitización de datos
+# - Botón para descargar plantilla CSV
 # - Registro simple de inferencias a CSV
-# - Funciones cacheadas y main() para facilitar despliegue
 
 # ----------------------------
 # Rutas/artefactos fijos
@@ -32,9 +42,9 @@ LOGS_DIR = REPORTS_DIR / "logs"
 RUN_ID_PATH = MODELS_DIR / "run_id.txt"
 THRESHOLD_PATH = MODELS_DIR / "threshold.txt"
 COLUMNS_USED_PATH = MODELS_DIR / "columns_used.json"
-TRAIN_CLEAN_PATH = DATA_DIR / "train_clean.csv"  # usaremos esto para ajustar el scaler
+TRAIN_CLEAN_PATH = DATA_DIR / "train_clean.csv"  # opcional: para ajustar scaler
 
-# Columnas por defecto (por si no existe columns_used.json)
+# Columnas por defecto (si no existe columns_used.json)
 DEFAULT_FEATURES = [
     "RevolvingUtilizationOfUnsecuredLines",
     "age",
@@ -50,9 +60,8 @@ DEFAULT_FEATURES = [
 ]
 
 # ----------------------------
-# Utilidades
+# Utilidades básicas
 # ----------------------------
-
 def read_text(p: Path, default=None, to_float=False):
     if not p.exists():
         return default
@@ -63,7 +72,7 @@ def read_text(p: Path, default=None, to_float=False):
 def load_columns_used():
     if COLUMNS_USED_PATH.exists():
         data = json.loads(COLUMNS_USED_PATH.read_text(encoding="utf-8"))
-        # Acepta diferentes formatos: {"features": [...]}, {"columns": [...]}, o lista directa
+        # Acepta {"features":[...]}, {"columns":[...]} o lista directa
         if isinstance(data, dict):
             if "features" in data:
                 data = data["features"]
@@ -73,38 +82,100 @@ def load_columns_used():
     return DEFAULT_FEATURES
 
 
+# ----------------------------
+# Carga de modelo (robusta)
+# ----------------------------
 @st.cache_resource(show_spinner=False)
 def load_model(run_id: str):
     """
-    Intenta primero cargar un modelo MLflow empaquetado en 'models/mlflow_model'
-    (ideal para despliegues sin 'mlruns'). Si no existe, carga por runs:/<run_id>/model.
+    Intenta en orden:
+    1) models/mlflow_model (export local) → primero Torch, luego PyFunc
+    2) runs:/<run_id>/model → Torch o PyFunc
+    3) (opcional) models:/credit_risk_mlp_v3/Production si hay MLFLOW_TRACKING_URI
     """
-    local_mlflow_model = MODELS_DIR / "mlflow_model" / "MLmodel"
+    local_dir = MODELS_DIR / "mlflow_model"
+
+    # A) Export local
+    if (local_dir / "MLmodel").exists():
+        # 1) Torch
+        try:
+            m = mlflow.pytorch.load_model(str(local_dir))
+            m.eval()
+            return m
+        except Exception:
+            pass
+        # 2) PyFunc
+        try:
+            m = mlflow.pyfunc.load_model(str(local_dir))
+            return m
+        except Exception as e:
+            st.error(f"No se pudo cargar modelo local (torch/pyfunc). Detalle: {e}")
+            raise
+
+    # B) Run directo
     try:
-        if local_mlflow_model.exists():
-            # Carga modelo desde la carpeta local que copiaste
-            model = mlflow.pytorch.load_model(str(MODELS_DIR / "mlflow_model"))
-        else:
-            # Si no existe carpeta local, intenta cargar desde MLflow
-            uri = f"runs:/{run_id}/model"
-            model = mlflow.pytorch.load_model(uri)
-        model.eval()
-        return model
+        m = mlflow.pytorch.load_model(f"runs:/{run_id}/model")
+        m.eval()
+        return m
+    except Exception:
+        try:
+            m = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
+            return m
+        except Exception:
+            pass
+
+    # C) Registry (opcional)
+    try:
+        if os.environ.get("MLFLOW_TRACKING_URI"):
+            try:
+                m = mlflow.pytorch.load_model("models:/credit_risk_mlp_v3/Production")
+                m.eval()
+                return m
+            except Exception:
+                m = mlflow.pyfunc.load_model("models:/credit_risk_mlp_v3/Production")
+                return m
     except Exception as e:
-        st.error(f"No se pudo cargar el modelo. Detalle: {e}")
+        st.error(f"No se pudo cargar modelo del registry. Detalle: {e}")
         raise
+
+    st.error("No se pudo cargar ningún modelo (local/runs/registry). Revisa models/mlflow_model.")
+    raise RuntimeError("Modelo no disponible")
+
 
 @st.cache_resource(show_spinner=False)
 def fit_scaler_on_train(columns_order):
     """
-    Ajusta el StandardScaler sobre train_clean, aplicando el mismo orden de columnas.
-    Nota: para mantener la app simple, hacemos un escalado estándar (sin winsor/log).
+    1) Carga models/scaler.pkl si existe.
+    2) Si no, ajusta StandardScaler con data/train_clean.csv (si existe).
+    3) Si no hay nada, usa IdentityScaler (no transforma).
     """
-    df = pd.read_csv(TRAIN_CLEAN_PATH)
-    X = df[columns_order].copy()
-    scaler = StandardScaler()
-    scaler.fit(X.values.astype(np.float32))
-    return scaler
+    # 1) scaler.pkl
+    scaler_path = MODELS_DIR / "scaler.pkl"
+    if scaler_path.exists() and joblib is not None:
+        try:
+            scaler = joblib.load(scaler_path)
+            return scaler
+        except Exception as e:
+            st.warning(f"No se pudo cargar scaler.pkl: {e}. Intentando con train_clean.csv...")
+
+    # 2) train_clean.csv
+    if TRAIN_CLEAN_PATH.exists():
+        df = pd.read_csv(TRAIN_CLEAN_PATH)
+        X = df[[c for c in columns_order if c in df.columns]].copy()
+        for c in columns_order:
+            if c not in X.columns:
+                X[c] = 0.0
+        X = X[columns_order].fillna(0.0).replace([np.inf, -np.inf], 0.0)
+        scaler = StandardScaler()
+        scaler.fit(X.values.astype(np.float32))
+        return scaler
+
+    # 3) IdentityScaler
+    st.warning("No se encontró 'models/scaler.pkl' ni 'data/train_clean.csv'. Usando IdentityScaler (sin estandarizar).")
+    class IdentityScaler:
+        def fit(self, X: Any): return self
+        def transform(self, X: Any): return X
+    return IdentityScaler()
 
 
 def ensure_columns(df: pd.DataFrame, columns_order: list):
@@ -113,15 +184,52 @@ def ensure_columns(df: pd.DataFrame, columns_order: list):
     for c in columns_order:
         if c not in out.columns:
             out[c] = 0.0
-    return out[columns_order]
+    out = out[columns_order]
+    return out
 
 
-def predict_proba_torch(model, X_np: np.ndarray) -> np.ndarray:
-    with torch.no_grad():
-        x_t = torch.tensor(X_np.astype(np.float32))
-        logits = model(x_t)
-        prob = torch.sigmoid(logits).cpu().numpy().reshape(-1)
-    return prob
+def to_sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
+    """
+    Soporta:
+    - nn.Module (Torch): model(tensor)
+    - PyFunc (MLflow): model.predict(DataFrame/ndarray)
+    Retorna probabilidades en [0,1] (si detecta logits, aplica sigmoide).
+    """
+    # 1) Intento Torch
+    try:
+        if hasattr(model, "eval"):
+            with torch.no_grad():
+                x_t = torch.tensor(X_np.astype(np.float32))
+                out = model(x_t)
+                if isinstance(out, (list, tuple)):
+                    out = out[0]
+                out_np = out.detach().cpu().numpy().reshape(-1)
+                if out_np.min() < 0.0 or out_np.max() > 1.0:
+                    out_np = to_sigmoid(out_np)
+                return out_np
+    except TypeError:
+        pass
+    except Exception:
+        pass
+
+    # 2) Intento PyFunc (preferir DataFrame con nombres)
+    try:
+        df = pd.DataFrame(X_np, columns=columns_order)
+        out = model.predict(df)
+        out_np = np.array(out).reshape(-1)
+        if out_np.min() < 0.0 or out_np.max() > 1.0:
+            out_np = to_sigmoid(out_np)
+        return out_np
+    except Exception:
+        out = model.predict(X_np)
+        out_np = np.array(out).reshape(-1)
+        if out_np.min() < 0.0 or out_np.max() > 1.0:
+            out_np = to_sigmoid(out_np)
+        return out_np
 
 
 def log_inference(rows_df: pd.DataFrame, probs: np.ndarray, preds: np.ndarray, threshold: float):
@@ -140,7 +248,6 @@ def log_inference(rows_df: pd.DataFrame, probs: np.ndarray, preds: np.ndarray, t
 # ----------------------------
 # UI
 # ----------------------------
-
 def main():
     st.set_page_config(page_title="Riesgo Crediticio (MLP)", page_icon="💳", layout="centered")
 
@@ -175,34 +282,34 @@ def main():
             fit_scaler_on_train.clear()
             st.experimental_rerun()
 
-    if run_id is None:
-        st.error("No se encontró models/run_id.txt. Asegúrate de haber guardado el run ganador.")
-        st.stop()
-
-    model = load_model(run_id)
+    # Nota: en modo offline podemos no requerir run_id, pero lo mostramos si existe.
+    model = load_model(run_id or "")
     scaler = fit_scaler_on_train(columns_order)
 
     st.markdown("---")
     st.subheader("🔹 Ingreso manual (un registro)")
     st.caption("Completa los campos y presiona *Predecir riesgo*. Campos numéricos sin símbolo $.")
 
+    # ----------------------------
+    # 🔽 🔽 🔽 SECCIÓN: PREDICCIÓN MANUAL (aquí hicimos los cambios)
+    # ----------------------------
     with st.form("manual_form"):
         c1, c2 = st.columns(2)
         with c1:
             RevolvingUtilizationOfUnsecuredLines = st.number_input(
-                "Utilización de líneas no garantizadas (0–1)", min_value=0.0, step=0.01, format="%0.4f"
+                "Utilización de líneas no garantizadas (0–1)", min_value=0.0, step=0.01, format="%0.4f", value=0.01
             )
             age = st.number_input("Edad (años)", min_value=0, step=1, value=35)
-            NumberOfTime30_59 = st.number_input("Núm. veces atraso 30–59 días", min_value=0, step=1, value=0)
-            DebtRatio = st.number_input("Relación de deuda (0–1)", min_value=0.0, step=0.01, format="%0.4f")
-            MonthlyIncome = st.number_input("Ingreso mensual (USD)", min_value=0.0, step=100.0)
-            NumberOfOpenCreditLinesAndLoans = st.number_input("Líneas/préstamos abiertos", min_value=0, step=1, value=3)
+            NumberOfTime30_59 = st.number_input("Núm. veces atraso 30–59 días", min_value=0, step=1, value=2)
+            DebtRatio = st.number_input("Relación de deuda (0–1)", min_value=0.0, step=0.01, format="%0.4f", value=0.01)
+            MonthlyIncome = st.number_input("Ingreso mensual (USD)", min_value=0.0, step=100.0, value=25000.0)
+            NumberOfOpenCreditLinesAndLoans = st.number_input("Líneas/préstamos abiertos", min_value=0, step=1, value=1)
         with c2:
-            NumberOfTimes90DaysLate = st.number_input("Núm. veces atraso ≥90 días", min_value=0, step=1, value=0)
-            NumberRealEstateLoansOrLines = st.number_input("Núm. hipotecas/líneas inmobiliarias", min_value=0, step=1, value=0)
-            NumberOfTime60_89 = st.number_input("Núm. veces atraso 60–89 días", min_value=0, step=1, value=0)
-            NumberOfDependents = st.number_input("Núm. de dependientes", min_value=0, step=1, value=0)
-            sex = st.selectbox("Sexo", ["male", "female"])  # se mapeará a Sex_num
+            NumberOfTimes90DaysLate = st.number_input("Núm. veces atraso ≥90 días", min_value=0, step=1, value=1)
+            NumberRealEstateLoansOrLines = st.number_input("Núm. hipotecas/líneas inmobiliarias", min_value=0, step=1, value=1)
+            NumberOfTime60_89 = st.number_input("Núm. veces atraso 60–89 días", min_value=0, step=1, value=1)
+            NumberOfDependents = st.number_input("Núm. de dependientes", min_value=0, step=1, value=2)
+            sex = st.selectbox("Sexo", ["male", "female"], index=1)  # se mapeará a Sex_num
             Sex_num = 1.0 if sex == "male" else 0.0
 
         submitted = st.form_submit_button("Predecir riesgo")
@@ -221,9 +328,14 @@ def main():
                 "Sex_num": Sex_num,
             }
             X = pd.DataFrame([row])
+            # Sanitización + orden de columnas
             X = ensure_columns(X, columns_order)
+            X = X.fillna(0.0).replace([np.inf, -np.inf], 0.0)
+            # Escalado
             Xs = scaler.transform(X.values.astype(np.float32))
-            prob = float(predict_proba_torch(model, Xs)[0])
+            # 🔁 NUEVO: predicción robusta
+            probs = predict_scores(model, Xs, columns_order)
+            prob = float(probs[0])
             yhat = int(prob >= threshold)
 
             st.success(f"**Probabilidad de morosidad (≥90 días):** {prob:.4f}")
@@ -232,7 +344,7 @@ def main():
             # Log de inferencia unitaria
             try:
                 log_inference(pd.DataFrame([row]), np.array([prob]), np.array([yhat]), threshold)
-            except Exception as _:
+            except Exception:
                 pass
 
     st.markdown("---")
@@ -240,17 +352,30 @@ def main():
     st.write("Formato esperado (columnas, sin objetivo):")
     st.code(",".join(columns_order), language="text")
 
+    # Botón de plantilla CSV
+    tpl = pd.DataFrame(columns=columns_order)
+    st.download_button(
+        "Descargar plantilla CSV",
+        data=tpl.to_csv(index=False).encode("utf-8"),
+        file_name="plantilla_credit_mlp.csv",
+        mime="text/csv"
+    )
+
     file = st.file_uploader("Sube un CSV con las columnas de entrada", type=["csv"])
     if file is not None:
         try:
             df_in = pd.read_csv(file)
-            # mapear sex si viniera como 'Sex' (opcional)
+            # mapear sex si viniera como 'Sex'
             if "Sex" in df_in.columns and "Sex_num" not in df_in.columns:
                 df_in["Sex_num"] = df_in["Sex"].map({"male": 1, "female": 0}).fillna(0).astype(float)
 
+            # Sanitización + orden
             df_in = ensure_columns(df_in, columns_order)
+            df_in = df_in.fillna(0.0).replace([np.inf, -np.inf], 0.0)
+            # Escalado
             Xs = scaler.transform(df_in.values.astype(np.float32))
-            probs = predict_proba_torch(model, Xs)
+            # 🔁 NUEVO: predicción robusta
+            probs = predict_scores(model, Xs, columns_order)
             preds = (probs >= threshold).astype(int)
 
             out = df_in.copy()
@@ -258,7 +383,7 @@ def main():
             out["prediction"] = preds
 
             st.write("Vista previa (primeras 20 filas):")
-            st.dataframe(out.head(20))
+            st.dataframe(out.head(20), use_container_width=True)
 
             INFERENCE_DIR.mkdir(parents=True, exist_ok=True)
             out_path = INFERENCE_DIR / "batch_predictions.csv"
@@ -268,7 +393,7 @@ def main():
             # Log de inferencias por lote
             try:
                 log_inference(df_in, probs, preds, threshold)
-            except Exception as _:
+            except Exception:
                 pass
 
         except Exception as e:
@@ -276,20 +401,17 @@ def main():
 
     # Sidebar de ayuda
     with st.sidebar:
-        st.header("ℹ️ Ayuda")
+        st.header("ℹ️ Acerca de esta demo")
         st.markdown(
             """
-            **¿Qué significa que un despliegue *se duerma*?**
-            
-            Algunos servicios gratuitos apagan la app cuando no hay tráfico para ahorrar recursos. 
-            Cuando vuelves a abrir la URL, tarda unos segundos en *despertar* (arranque en frío) y luego funciona normal. 
-            
-            Ventajas: es gratis o muy barato. 
-            Contras: la primera carga puede tardar.
+            Demo académica para ilustrar un flujo de **riesgo crediticio** con MLP (PyTorch + MLflow).
+            Esta aplicación no constituye recomendación financiera.
             """
         )
-        st.markdown("**Soporte:** Si algo falla, revisa que existan:**\n- `models/run_id.txt`\n- `models/threshold.txt`\n- `models/columns_used.json`\n- `data/train_clean.csv`")
+        st.markdown("**Soporte:** Verifica que existan:\n- `models/mlflow_model/MLmodel`\n- `models/run_id.txt`\n- `models/threshold.txt`\n- `models/columns_used.json`")
 
 
 if __name__ == "__main__":
+    # Si usas Streamlit Cloud con Secrets para MLflow remoto (no necesario en modo offline):
+    # if hasattr(st, "secrets"): os.environ.update({k: str(v) for k, v in st.secrets.items()})
     main()
