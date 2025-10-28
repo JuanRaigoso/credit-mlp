@@ -716,6 +716,25 @@ def main():
             "- `models/columns_used.json`"
         )
         st.markdown('</div>', unsafe_allow_html=True)
+        st.divider()
+        st.markdown(
+            """
+            <div style="text-align:center;">
+                <a href="https://github.com/JuanRaigoso/credit-mlp" target="_blank" style="text-decoration:none;">
+                    <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/github/github-original.svg"
+                         width="28" style="vertical-align:middle; margin-right:6px;">
+                    <span style="font-size:0.95rem; color:#2563eb; font-weight:600;">
+                        Repositorio del proyecto
+                    </span>
+                </a>
+                <p style="font-size:0.85rem; color:#64748b; margin-top:6px;">
+                    Visita el código fuente y más detalles del desarrollo.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 
 
 if __name__ == "__main__":
