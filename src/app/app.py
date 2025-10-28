@@ -91,58 +91,67 @@ def load_columns_used():
 @st.cache_resource(show_spinner=False)
 def load_model(run_id: str):
     """
-    Preferimos PyFunc para evitar forwards específicos de nn.Module.
-    Orden:
-    1) models/mlflow_model (PyFunc -> Torch)
-    2) runs:/<run_id>/model (PyFunc -> Torch)
-    3) models:/credit_risk_mlp_v3/Production (PyFunc -> Torch) si hay MLFLOW_TRACKING_URI
+    Carga el MLP evitando PyFunc:
+    1) mlflow.pytorch.load_model desde 'models/mlflow_model'
+    2) TorchScript si existe algún .pt/.pth adentro del export local
+    3) mlflow.pytorch.load_model desde runs:/<run_id>/model
+    4) (opcional) TorchScript suelto en models/artifacts/checkpoint/*.pt
     """
     local_dir = MODELS_DIR / "mlflow_model"
 
-    # A) Export local
+    # A) Intentar como modelo PyTorch (NO pyfunc)
     if (local_dir / "MLmodel").exists():
-        try:
-            return mlflow.pyfunc.load_model(str(local_dir))
-        except Exception:
-            pass
         try:
             m = mlflow.pytorch.load_model(str(local_dir))
             m.eval()
+            m.to("cpu")
             return m
-        except Exception as e:
-            st.error(f"No se pudo cargar modelo local. Detalle: {e}")
-            raise
-
-    # B) runs:/<run_id>/model
-    if run_id:
-        try:
-            return mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
         except Exception:
             pass
+
+        # B) Intentar TorchScript dentro del export local (data/, artifacts/, etc.)
+        try:
+            # Busca .pt / .pth razonables
+            candidates = list((local_dir / "artifacts").rglob("*.pt")) + \
+                         list((local_dir / "artifacts").rglob("*.pth")) + \
+                         list((local_dir / "data").rglob("*.pt")) + \
+                         list((local_dir / "data").rglob("*.pth"))
+            for p in candidates:
+                try:
+                    m = torch.jit.load(str(p), map_location="cpu")
+                    m.eval()
+                    return m
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # C) Intentar desde el run en el tracking local
+    if run_id:
         try:
             m = mlflow.pytorch.load_model(f"runs:/{run_id}/model")
             m.eval()
+            m.to("cpu")
             return m
         except Exception:
             pass
 
-    # C) Registry (opcional)
-    if os.environ.get("MLFLOW_TRACKING_URI"):
-        try:
-            return mlflow.pyfunc.load_model("models:/credit_risk_mlp_v3/Production")
-        except Exception:
-            pass
-        try:
-            m = mlflow.pytorch.load_model("models:/credit_risk_mlp_v3/Production")
-            m.eval()
-            return m
-        except Exception as e:
-            st.error(f"No se pudo cargar modelo del registry. Detalle: {e}")
-            raise
+    # D) Intentar TorchScript suelto en models/artifacts/checkpoint/*.pt
+    try:
+        ckpt_dir = MODELS_DIR / "mlflow_model" / "artifacts" / "checkpoint"
+        if ckpt_dir.exists():
+            for p in ckpt_dir.rglob("*.pt"):
+                try:
+                    m = torch.jit.load(str(p), map_location="cpu")
+                    m.eval()
+                    return m
+                except Exception:
+                    continue
+    except Exception:
+        pass
 
-    st.error("No se pudo cargar ningún modelo (local/runs/registry). Revisa models/mlflow_model.")
+    st.error("No se pudo cargar el modelo como PyTorch/TorchScript. Revisa 'models/mlflow_model'.")
     raise RuntimeError("Modelo no disponible")
-
 
 @st.cache_resource(show_spinner=False)
 def fit_scaler_on_train(columns_order):
@@ -239,66 +248,68 @@ def _torch_try_forward(mod, x_t: "torch.Tensor"):
 
 def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
     """
-    Estrategia:
-    1) Si el PyFunc envuelve un modelo torch, extraemos el pytorch_model interno (eval+cpu)
-       y llamamos nosotros probando firmas.
-    2) Si el modelo es nn.Module directo, llamamos nosotros probando firmas.
-    3) Como último recurso, usamos model.predict(...) (PyFunc) por si alguna versión lo soporta.
-    Normalizamos a probabilidades [0,1] aplicando sigmoide si detectamos logits.
+    Solo rutas Torch (nn.Module o TorchScript). Evita PyFunc/predict.
+    Probamos variantes de llamada y de forma para el tensor.
+    Normalizamos a prob con sigmoide si detectamos logits.
     """
-    # Intento A: Si es PyFunc y expone el wrapper de PyTorch por dentro, úsalo directo
+    x_base = torch.tensor(X_np.astype(np.float32))
+
+    # candidato de tensores a probar: shape y contenedores
+    tensor_variants = [
+        x_base,
+        x_base.float(),
+        x_base.squeeze(0),
+        x_base.unsqueeze(0),
+    ]
+
+    def _as_probs(y: np.ndarray) -> np.ndarray:
+        y = y.reshape(-1)
+        if y.min() < 0.0 or y.max() > 1.0:
+            y = 1.0 / (1.0 + np.exp(-y))
+        return y
+
+    # Caso 1: TorchScript (ScriptModule) o nn.Module
     try:
-        if isinstance(model, PyFuncModel):
-            impl = getattr(model, "_model_impl", None)
-            inner = getattr(impl, "pytorch_model", None) if impl is not None else None
-            if inner is not None:
-                inner.eval()
-                inner.to("cpu")
-                x_t = torch.tensor(X_np.astype(np.float32))
-                out = _torch_try_forward(inner, x_t)
+        model.eval()
+    except Exception:
+        pass
+    try:
+        model.to("cpu")
+    except Exception:
+        pass
+
+    with torch.no_grad():
+        for x in tensor_variants:
+            # Llamadas directas
+            try:
+                out = model(x)
                 if isinstance(out, (list, tuple)):
                     out = out[0]
-                out_np = out.detach().cpu().numpy().reshape(-1)
-                if out_np.min() < 0.0 or out_np.max() > 1.0:
-                    out_np = to_sigmoid(out_np)
-                return out_np
-    except Exception:
-        pass
-
-    # Intento B: Si es un nn.Module directo
-    try:
-        if isinstance(model, nn.Module):
-            model.eval()
-            model.to("cpu")
-            x_t = torch.tensor(X_np.astype(np.float32))
-            out = _torch_try_forward(model, x_t)
-            if isinstance(out, (list, tuple)):
-                out = out[0]
-            out_np = out.detach().cpu().numpy().reshape(-1)
-            if out_np.min() < 0.0 or out_np.max() > 1.0:
-                out_np = to_sigmoid(out_np)
-            return out_np
-    except Exception:
-        pass
-
-    # Intento C: PyFunc estándar (por si el modelo fuera realmente un PyFunc no-pytorch)
-    try:
-        if hasattr(model, "predict"):
-            try:
-                df = pd.DataFrame(X_np, columns=columns_order)
-                out = model.predict(df)
+                out_np = out.detach().cpu().numpy()
+                return _as_probs(out_np)
             except Exception:
-                out = model.predict(X_np)
-            out_np = np.array(out).reshape(-1)
-            if out_np.min() < 0.0 or out_np.max() > 1.0:
-                out_np = to_sigmoid(out_np)
-            return out_np
-    except Exception as e:
-        # si ya nada funcionó, relanza para ver el detalle en logs
-        raise e
+                pass
+            # Llamadas con dicts típicos
+            for key in ("x", "inputs", "input"):
+                try:
+                    out = model({key: x})
+                    if isinstance(out, (list, tuple)):
+                        out = out[0]
+                    out_np = out.detach().cpu().numpy()
+                    return _as_probs(out_np)
+                except Exception:
+                    pass
+            # Llamada como tupla
+            try:
+                out = model((x,))
+                if isinstance(out, (list, tuple)):
+                    out = out[0]
+                out_np = out.detach().cpu().numpy()
+                return _as_probs(out_np)
+            except Exception:
+                pass
 
-    raise TypeError(f"Tipo de modelo no soportado: {type(model)}")
-
+    raise TypeError(f"No se pudo inferir con Torch. Tipo de modelo: {type(model)}")
 
 def log_inference(rows_df: pd.DataFrame, probs: np.ndarray, preds: np.ndarray, threshold: float):
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
