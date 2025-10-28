@@ -291,7 +291,7 @@ def log_inference(rows_df: pd.DataFrame, probs: np.ndarray, preds: np.ndarray, t
 # UI
 # ----------------------------
 def main():
-    st.set_page_config(page_title="Riesgo Crediticio (MLP)", page_icon="💳", layout="centered")
+    st.set_page_config(page_title="Evaluador de Riesgo Crediticio", page_icon="📊", layout="centered")
 
     # Estilos mínimos
     st.markdown(
@@ -300,12 +300,14 @@ def main():
         .small { font-size: 0.85rem; color: #888; }
         .oktag { background:#1f6feb; color:white; padding:2px 6px; border-radius:6px; }
         .pill { background:#30363d; color:#c9d1d9; padding:2px 6px; border-radius:999px; }
+        .card { padding:14px 16px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.title("💳 Credit Risk MLP — Demo (ES)")
+    st.title("Evaluador de Riesgo Crediticio 💰🏦")
+    st.caption("Estima la probabilidad de **morosidad ≥ 90 días** con base en información del solicitante. Esta es una **herramienta de apoyo**.")
 
     # Cargar artefactos base
     run_id = read_text(RUN_ID_PATH, default=None)
@@ -314,7 +316,8 @@ def main():
 
     c0, c1, c2 = st.columns([1.2, 1, 1])
     with c0:
-        st.markdown(f"**Run ID (prod):** <span class='pill'>{run_id or 'NO DEFINIDO'}</span>", unsafe_allow_html=True)
+        # Texto más claro para el modelo en uso
+        st.markdown(f"**Modelo en uso:** <span class='pill'>{run_id or 'NO DEFINIDO'}</span>", unsafe_allow_html=True)
     with c1:
         st.markdown(f"**Umbral operativo:** <span class='pill'>{threshold:.4f}</span>", unsafe_allow_html=True)
     with c2:
@@ -330,7 +333,7 @@ def main():
 
     st.markdown("---")
     st.subheader("🔹 Ingreso manual (un registro)")
-    st.caption("Completa los campos y presiona *Predecir riesgo*. Campos numéricos sin símbolo $.")
+    st.caption("Completa los campos y presiona **Evaluar solicitud**. Los campos numéricos van **sin símbolos** (p. ej., sin $).")
 
     # ----------------------------
     # 🔽 🔽 🔽 SECCIÓN: PREDICCIÓN MANUAL
@@ -339,22 +342,64 @@ def main():
         c1, c2 = st.columns(2)
         with c1:
             RevolvingUtilizationOfUnsecuredLines = st.number_input(
-                "Utilización de líneas no garantizadas (0–1)", min_value=0.0, step=0.01, format="%0.4f", value=0.01
+                "Utilización de líneas no garantizadas (0–1)",
+                min_value=0.0, max_value=1.0, step=0.01, format="%0.4f", value=0.01,
+                help="Saldo total en tarjetas/líneas de crédito personales dividido por límites totales (excluye hipotecas y deudas a plazos)."
             )
-            age = st.number_input("Edad (años)", min_value=0, step=1, value=35)
-            NumberOfTime30_59 = st.number_input("Núm. veces atraso 30–59 días", min_value=0, step=1, value=2)
-            DebtRatio = st.number_input("Relación de deuda (0–1)", min_value=0.0, step=0.01, format="%0.4f", value=0.01)
-            MonthlyIncome = st.number_input("Ingreso mensual (USD)", min_value=0.0, step=100.0, value=25000.0)
-            NumberOfOpenCreditLinesAndLoans = st.number_input("Líneas/préstamos abiertos", min_value=0, step=1, value=1)
+            age = st.number_input(
+                "Edad del solicitante (años)",
+                min_value=18, step=1, value=35,
+                help="Mínimo 18 años."
+            )
+            NumberOfTime30_59 = st.number_input(
+                "Núm. atrasos en pagos durante los últimos 30–59 días",
+                min_value=0, step=1, value=2,
+                help="Número de veces que el prestatario ha tenido un retraso de pago de 30 a 59 días."
+            )
+            DebtRatio = st.number_input(
+                "Relación de deuda",
+                min_value=0.0, step=0.01, format="%0.4f", value=0.20,
+                help="(Pagos de deuda + pensión + costos de vida) / Ingreso bruto mensual."
+            )
+            MonthlyIncome = st.number_input(
+                "Ingreso mensual (USD)",
+                min_value=0.0, step=100.0, value=2500.0, format="%0.2f",
+                help="Monto total de ingresos mensuales declarados."
+            )
+            NumberOfOpenCreditLinesAndLoans = st.number_input(
+                "Núm. líneas/préstamos abiertos",
+                min_value=0, step=1, value=1,
+                help="Total de tarjetas, préstamos de auto/hipoteca, etc. que están abiertos."
+            )
         with c2:
-            NumberOfTimes90DaysLate = st.number_input("Núm. veces atraso ≥90 días", min_value=0, step=1, value=1)
-            NumberRealEstateLoansOrLines = st.number_input("Núm. hipotecas/líneas inmobiliarias", min_value=0, step=1, value=1)
-            NumberOfTime60_89 = st.number_input("Núm. veces atraso 60–89 días", min_value=0, step=1, value=1)
-            NumberOfDependents = st.number_input("Núm. de dependientes", min_value=0, step=1, value=2)
-            sex = st.selectbox("Sexo", ["male", "female"], index=1)  # se mapeará a Sex_num
+            NumberOfTimes90DaysLate = st.number_input(
+                "Núm. atrasos ≥ 90 días",
+                min_value=0, step=1, value=1,
+                help="Veces con retrasos de 90 días o más."
+            )
+            NumberRealEstateLoansOrLines = st.number_input(
+                "Núm. hipotecas/líneas inmobiliarias",
+                min_value=0, step=1, value=1,
+                help="Incluye créditos sobre el valor de la vivienda."
+            )
+            NumberOfTime60_89 = st.number_input(
+                "Núm. atrasos 60–89 días",
+                min_value=0, step=1, value=1,
+                help="Veces con retrasos entre 60 y 89 días."
+            )
+            NumberOfDependents = st.number_input(
+                "Núm. de dependientes",
+                min_value=0, step=1, value=2,
+                help="Personas a cargo (cónyuge, hijos, etc.)."
+            )
+            sex = st.selectbox(
+                "Sexo (según registro)",
+                ["female", "male"], index=1,
+                help="Sexo del solicitante (Hombre/Mujer) (Male/Female)."
+            )
             Sex_num = 1.0 if sex == "male" else 0.0
 
-        submitted = st.form_submit_button("Predecir riesgo")
+        submitted = st.form_submit_button("Evaluar solicitud")
         if submitted:
             row = {
                 "RevolvingUtilizationOfUnsecuredLines": RevolvingUtilizationOfUnsecuredLines,
@@ -380,8 +425,45 @@ def main():
             prob = float(probs[0])
             yhat = int(prob >= threshold)
 
-            st.success(f"**Probabilidad de morosidad (≥90 días):** {prob:.4f}")
-            st.info(f"**Decisión (umbral {threshold:.4f}):** {'RIESGO (1)' if yhat==1 else 'NO RIESGO (0)'}")
+            # === Render amigable ===
+            pct_text = f"{prob*100:.2f}%"
+            st.markdown(
+                f"""
+                <div class="card">
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span class="oktag">Probabilidad estimada</span>
+                        <span class="small">La probabilidad se expresa 0–100% (p. ej. 75.00% = 0.7500)</span>
+                    </div>
+                    <h3 style="margin:8px 0 0 0;">Morosidad (≥ 90 días): {pct_text}</h3>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if yhat == 1:
+                st.markdown(
+                    f"""
+                    <div class="card" style="border:1px solid #ef444433;background:#fef2f2;">
+                        <strong>Decisión del modelo:</strong> Riesgo (clase 1)<br/>
+                        <strong>Interpretación:</strong> Probabilidad alta de incumplimiento.<br/>
+                        <strong>Recomendación operativa:</strong> No aprobar el crédito o solicitar garantías adicionales (según política).
+                        <p class="small">Umbral usado por el modelo: {threshold:.4f}. Se marca "Riesgo" cuando probabilidad ≥ umbral.</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f"""
+                    <div class="card" style="border:1px solid #22c55e33;background:#f0fdf4;">
+                        <strong>Decisión del modelo:</strong> No riesgo (clase 0)<br/>
+                        <strong>Interpretación:</strong> Probabilidad baja de incumplimiento.<br/>
+                        <strong>Recomendación operativa:</strong> Se puede considerar aprobación siguiendo políticas y verificaciones.
+                        <p class="small">Umbral usado por el modelo: {threshold:.4f}. Se marca "No riesgo" cuando probabilidad &lt; umbral.</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
             # Log de inferencia unitaria
             try:
@@ -446,8 +528,7 @@ def main():
         st.header("ℹ️ Acerca de esta demo")
         st.markdown(
             """
-            Demo académica para ilustrar un flujo de **riesgo crediticio** con MLP (PyTorch + MLflow).
-            Esta aplicación no constituye recomendación financiera.
+            Herramienta para ilustrar un flujo de **evaluación de riesgo crediticio** con MLP (PyTorch + MLflow).
             """
         )
         st.markdown("**Soporte:** Verifica que existan:\n- `models/mlflow_model/MLmodel`\n- `models/run_id.txt`\n- `models/threshold.txt`\n- `models/columns_used.json`")
