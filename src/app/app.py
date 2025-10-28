@@ -308,17 +308,17 @@ def main():
         """
         <style>
             :root {
-                --bg: #9BA2BA;           /* fondo app */
-                --panel: #121a2b;        /* paneles/cards */
-                --panel-2: #0e1626;      /* paneles secundarios */
-                --text: #0D0D0D;         /* texto principal */
-                --muted: #1F2F4D;        /* texto secundario */
-                --primary: #60a5fa;      /* azul */
-                --success: #34d399;      /* verde */
-                --warning: #fbbf24;      /* amarillo */
-                --danger: #f87171;       /* rojo */
-                --border: #1f2a44;       /* bordes */
-                --chip-bg: #0d2547;      /* fondo chip */
+                --bg: #f8fafc;           /* fondo app */
+                --panel: #ffffff;        /* paneles/cards */
+                --panel-2: #f1f5f9;      /* paneles secundarios */
+                --text: #1e293b;         /* texto principal */
+                --muted: #64748b;        /* texto secundario */
+                --primary: #2563eb;      /* azul */
+                --success: #16a34a;      /* verde */
+                --warning: #f59e0b;      /* amarillo */
+                --danger: #dc2626;       /* rojo */
+                --border: #e2e8f0;       /* bordes */
+                --chip-bg: #e2e8f0;      /* fondo chip */
             }
 
             html, body, [data-testid="stAppViewContainer"] {
