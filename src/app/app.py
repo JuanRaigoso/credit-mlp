@@ -90,33 +90,21 @@ def load_columns_used():
 # ----------------------------
 @st.cache_resource(show_spinner=False)
 def load_model(run_id: str):
-    """
-    Carga el modelo evitando el forward pickled de __main__.MLP.
-    Prioridad:
-    A) TorchScript exacto: models/mlflow_model/artifacts/checkpoints/best_phase2_run_09.pt
-    B) Cualquier TorchScript .pt/.pth dentro de models/mlflow_model/artifacts/checkpoint(s)
-    C) Cualquier TorchScript en todo models/mlflow_model
-    D) mlflow.pytorch.load_model(...) (último recurso)
-    """
     local_dir = MODELS_DIR / "mlflow_model"
 
-    # A) ruta exacta que nos diste
     exact_ts = local_dir / "artifacts" / "checkpoints" / "best_phase2_run_09.pt"
     candidates = []
     if exact_ts.exists():
         candidates.append(exact_ts)
 
-    # B) buscar en checkpoint y checkpoints
     for sub in ["checkpoint", "checkpoints"]:
         p = local_dir / "artifacts" / sub
         if p.exists():
             candidates += list(p.rglob("*.pt")) + list(p.rglob("*.pth"))
 
-    # C) si aún nada, buscar en todo mlflow_model
     if local_dir.exists():
         candidates += [p for p in local_dir.rglob("*.pt")] + [p for p in local_dir.rglob("*.pth")]
 
-    # Intentar TorchScript primero
     for p in candidates:
         try:
             m = torch.jit.load(str(p), map_location="cpu")
@@ -126,32 +114,10 @@ def load_model(run_id: str):
         except Exception:
             continue
 
-    # D) Último recurso: export de MLflow como PyTorch (NO PyFunc)
-    try:
-        if (local_dir / "MLmodel").exists():
-            m = mlflow.pytorch.load_model(str(local_dir))
-            m.eval()
-            m.to("cpu")
-            st.warning("Se cargó el export PyTorch de MLflow (no TorchScript). "
-                       "Si ves errores de `MLP + Tensor`, sube el TorchScript .pt.")
-            return m
-    except Exception:
-        pass
-
-    if run_id:
-        try:
-            m = mlflow.pytorch.load_model(f"runs:/{run_id}/model")
-            m.eval()
-            m.to("cpu")
-            st.warning("Se cargó runs:/<run_id>/model (no TorchScript). "
-                       "Si ves errores de `MLP + Tensor`, sube el TorchScript .pt.")
-            return m
-        except Exception:
-            pass
-
+    # ❗ No hacemos fallback a PyFunc. Forzamos TorchScript.
     st.error(
         "No encontré un TorchScript (.pt/.pth) válido. "
-        "Asegúrate de versionar `models/mlflow_model/artifacts/checkpoints/best_phase2_run_09.pt`."
+        "Exporta y versiona `models/mlflow_model/artifacts/checkpoints/best_phase2_run_09.pt`."
     )
     raise RuntimeError("Modelo no disponible")
 
@@ -250,9 +216,6 @@ def _torch_try_forward(mod, x_t: "torch.Tensor"):
 
 
 def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
-    """
-    Predicción SOLO con Torch (TorchScript o nn.Module).
-    """
     x = torch.tensor(X_np.astype(np.float32), device="cpu")
 
     def to_probs(y: np.ndarray) -> np.ndarray:
