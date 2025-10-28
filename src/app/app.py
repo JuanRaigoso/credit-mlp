@@ -10,15 +10,18 @@ import streamlit as st
 
 import mlflow
 import mlflow.pytorch
+import mlflow.pyfunc
+from mlflow.pyfunc import PyFuncModel  # 👈 NUEVO
 
-# torch es opcional para el flavor pyfunc, pero lo usamos si el modelo es nn.Module
 import torch
+from torch import nn  # 👈 NUEVO
 from sklearn.preprocessing import StandardScaler
 
 try:
     import joblib
 except Exception:
     joblib = None
+
 
 # ==========================================================
 # App Credit Risk MLP (versión en ESPAÑOL + UX + robustez)
@@ -199,37 +202,33 @@ def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
     - PyFunc (MLflow): model.predict(DataFrame/ndarray)
     Retorna probabilidades en [0,1] (si detecta logits, aplica sigmoide).
     """
-    # 1) Intento Torch
-    try:
-        if hasattr(model, "eval"):
-            with torch.no_grad():
-                x_t = torch.tensor(X_np.astype(np.float32))
-                out = model(x_t)
-                if isinstance(out, (list, tuple)):
-                    out = out[0]
-                out_np = out.detach().cpu().numpy().reshape(-1)
-                if out_np.min() < 0.0 or out_np.max() > 1.0:
-                    out_np = to_sigmoid(out_np)
-                return out_np
-    except TypeError:
-        pass
-    except Exception:
-        pass
+    # ✅ Caso 1: Torch nn.Module
+    if isinstance(model, nn.Module):
+        with torch.no_grad():
+            x_t = torch.tensor(X_np.astype(np.float32))
+            out = model(x_t)
+            if isinstance(out, (list, tuple)):
+                out = out[0]
+            out_np = out.detach().cpu().numpy().reshape(-1)
+            if out_np.min() < 0.0 or out_np.max() > 1.0:
+                out_np = to_sigmoid(out_np)
+            return out_np
 
-    # 2) Intento PyFunc (preferir DataFrame con nombres)
-    try:
-        df = pd.DataFrame(X_np, columns=columns_order)
-        out = model.predict(df)
+    # ✅ Caso 2: PyFunc de MLflow
+    if isinstance(model, PyFuncModel) or hasattr(model, "predict"):
+        # preferimos DataFrame con nombres correctos
+        try:
+            df = pd.DataFrame(X_np, columns=columns_order)
+            out = model.predict(df)
+        except Exception:
+            out = model.predict(X_np)
         out_np = np.array(out).reshape(-1)
         if out_np.min() < 0.0 or out_np.max() > 1.0:
             out_np = to_sigmoid(out_np)
         return out_np
-    except Exception:
-        out = model.predict(X_np)
-        out_np = np.array(out).reshape(-1)
-        if out_np.min() < 0.0 or out_np.max() > 1.0:
-            out_np = to_sigmoid(out_np)
-        return out_np
+
+    # Fallback defensivo (no debería ocurrir)
+    raise TypeError(f"Tipo de modelo no soportado: {type(model)}")
 
 
 def log_inference(rows_df: pd.DataFrame, probs: np.ndarray, preds: np.ndarray, threshold: float):
@@ -280,7 +279,8 @@ def main():
             # Limpiar cachés y recargar
             load_model.clear()
             fit_scaler_on_train.clear()
-            st.experimental_rerun()
+            st.rerun()
+
 
     # Nota: en modo offline podemos no requerir run_id, pero lo mostramos si existe.
     model = load_model(run_id or "")
