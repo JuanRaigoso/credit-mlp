@@ -26,10 +26,10 @@ except Exception:
 # ==========================================================
 # App Credit Risk MLP (versión en ESPAÑOL + UX + robustez)
 # ==========================================================
-# - Carga de modelo robusta: Torch o PyFunc (offline primero)
+# - Carga de modelo robusta: PyFunc o Torch (offline primero)
 # - Scaler a prueba de fallos (scaler.pkl / train_clean.csv / Identity)
 # - Sanitización de datos
-# - Botón para descargar plantilla CSV
+# - Botón de plantilla CSV
 # - Registro simple de inferencias a CSV
 
 # ----------------------------
@@ -198,7 +198,7 @@ def _torch_try_forward(mod, x_t: "torch.Tensor"):
     """
     Intenta varias formas de llamar a forward, por si el modelo espera
     tensor directo, tupla, o dict con distintos nombres.
-    Devuelve `np.ndarray` o relanza excepción si todas fallan.
+    Devuelve el output (tensor o similar) o relanza excepción si todas fallan.
     """
     with torch.no_grad():
         # 1) forward(x)
@@ -240,19 +240,20 @@ def _torch_try_forward(mod, x_t: "torch.Tensor"):
 def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
     """
     Estrategia:
-    1) Si el PyFunc envuelve un modelo torch, extraemos el pytorch_model interno y llamamos nosotros probando firmas.
+    1) Si el PyFunc envuelve un modelo torch, extraemos el pytorch_model interno (eval+cpu)
+       y llamamos nosotros probando firmas.
     2) Si el modelo es nn.Module directo, llamamos nosotros probando firmas.
     3) Como último recurso, usamos model.predict(...) (PyFunc) por si alguna versión lo soporta.
     Normalizamos a probabilidades [0,1] aplicando sigmoide si detectamos logits.
     """
     # Intento A: Si es PyFunc y expone el wrapper de PyTorch por dentro, úsalo directo
     try:
-        from mlflow.pyfunc import PyFuncModel
         if isinstance(model, PyFuncModel):
-            # PyFuncModel suele tener un impl interno; si es de mlflow.pytorch, expone pytorch_model
             impl = getattr(model, "_model_impl", None)
             inner = getattr(impl, "pytorch_model", None) if impl is not None else None
             if inner is not None:
+                inner.eval()
+                inner.to("cpu")
                 x_t = torch.tensor(X_np.astype(np.float32))
                 out = _torch_try_forward(inner, x_t)
                 if isinstance(out, (list, tuple)):
@@ -266,8 +267,9 @@ def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
 
     # Intento B: Si es un nn.Module directo
     try:
-        from torch import nn
         if isinstance(model, nn.Module):
+            model.eval()
+            model.to("cpu")
             x_t = torch.tensor(X_np.astype(np.float32))
             out = _torch_try_forward(model, x_t)
             if isinstance(out, (list, tuple)):
@@ -348,7 +350,6 @@ def main():
             fit_scaler_on_train.clear()
             st.rerun()
 
-
     # Nota: en modo offline podemos no requerir run_id, pero lo mostramos si existe.
     model = load_model(run_id or "")
     scaler = fit_scaler_on_train(columns_order)
@@ -358,7 +359,7 @@ def main():
     st.caption("Completa los campos y presiona *Predecir riesgo*. Campos numéricos sin símbolo $.")
 
     # ----------------------------
-    # 🔽 🔽 🔽 SECCIÓN: PREDICCIÓN MANUAL (aquí hicimos los cambios)
+    # 🔽 🔽 🔽 SECCIÓN: PREDICCIÓN MANUAL
     # ----------------------------
     with st.form("manual_form"):
         c1, c2 = st.columns(2)
@@ -400,7 +401,7 @@ def main():
             X = X.fillna(0.0).replace([np.inf, -np.inf], 0.0)
             # Escalado
             Xs = scaler.transform(X.values.astype(np.float32))
-            # 🔁 NUEVO: predicción robusta
+            # Predicción robusta
             probs = predict_scores(model, Xs, columns_order)
             prob = float(probs[0])
             yhat = int(prob >= threshold)
@@ -441,7 +442,7 @@ def main():
             df_in = df_in.fillna(0.0).replace([np.inf, -np.inf], 0.0)
             # Escalado
             Xs = scaler.transform(df_in.values.astype(np.float32))
-            # 🔁 NUEVO: predicción robusta
+            # Predicción robusta
             probs = predict_scores(model, Xs, columns_order)
             preds = (probs >= threshold).astype(int)
 
