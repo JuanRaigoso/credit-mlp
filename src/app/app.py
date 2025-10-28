@@ -11,10 +11,10 @@ import streamlit as st
 import mlflow
 import mlflow.pytorch
 import mlflow.pyfunc
-from mlflow.pyfunc import PyFuncModel  # 👈 IMPORTANTE
+from mlflow.pyfunc import PyFuncModel
 
 import torch
-from torch import nn  # 👈 IMPORTANTE
+from torch import nn
 from sklearn.preprocessing import StandardScaler
 
 try:
@@ -194,39 +194,107 @@ def to_sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-x))
 
 
+def _torch_try_forward(mod, x_t: "torch.Tensor"):
+    """
+    Intenta varias formas de llamar a forward, por si el modelo espera
+    tensor directo, tupla, o dict con distintos nombres.
+    Devuelve `np.ndarray` o relanza excepción si todas fallan.
+    """
+    with torch.no_grad():
+        # 1) forward(x)
+        try:
+            out = mod(x_t)
+            return out
+        except Exception:
+            pass
+
+        # 2) forward((x,))
+        try:
+            out = mod((x_t,))
+            return out
+        except Exception:
+            pass
+
+        # 3) forward({'x': x})
+        try:
+            out = mod({"x": x_t})
+            return out
+        except Exception:
+            pass
+
+        # 4) forward({'inputs': x})
+        try:
+            out = mod({"inputs": x_t})
+            return out
+        except Exception:
+            pass
+
+        # 5) forward({'input': x})
+        try:
+            out = mod({"input": x_t})
+            return out
+        except Exception as e:
+            raise e  # re-lanzamos la última para ver el motivo real
+
+
 def predict_scores(model, X_np: np.ndarray, columns_order: list) -> np.ndarray:
     """
-    1) Si el modelo tiene .predict (PyFunc) -> úsalo (preferimos DataFrame con nombres)
-    2) Si no, y es nn.Module -> usar forward con Tensor
-    Devuelve probabilidades en [0,1] (si detecta logits aplica sigmoide).
+    Estrategia:
+    1) Si el PyFunc envuelve un modelo torch, extraemos el pytorch_model interno y llamamos nosotros probando firmas.
+    2) Si el modelo es nn.Module directo, llamamos nosotros probando firmas.
+    3) Como último recurso, usamos model.predict(...) (PyFunc) por si alguna versión lo soporta.
+    Normalizamos a probabilidades [0,1] aplicando sigmoide si detectamos logits.
     """
-    # ✅ Intento 1: PyFunc (lo preferimos)
-    if hasattr(model, "predict") or isinstance(model, PyFuncModel):
-        try:
-            df = pd.DataFrame(X_np, columns=columns_order)
-            out = model.predict(df)
-        except Exception:
-            out = model.predict(X_np)
-        out_np = np.array(out).reshape(-1)
-        if out_np.size == 0:
-            raise ValueError("Modelo PyFunc devolvió salida vacía")
-        if out_np.min() < 0.0 or out_np.max() > 1.0:
-            out_np = to_sigmoid(out_np)
-        return out_np
+    # Intento A: Si es PyFunc y expone el wrapper de PyTorch por dentro, úsalo directo
+    try:
+        from mlflow.pyfunc import PyFuncModel
+        if isinstance(model, PyFuncModel):
+            # PyFuncModel suele tener un impl interno; si es de mlflow.pytorch, expone pytorch_model
+            impl = getattr(model, "_model_impl", None)
+            inner = getattr(impl, "pytorch_model", None) if impl is not None else None
+            if inner is not None:
+                x_t = torch.tensor(X_np.astype(np.float32))
+                out = _torch_try_forward(inner, x_t)
+                if isinstance(out, (list, tuple)):
+                    out = out[0]
+                out_np = out.detach().cpu().numpy().reshape(-1)
+                if out_np.min() < 0.0 or out_np.max() > 1.0:
+                    out_np = to_sigmoid(out_np)
+                return out_np
+    except Exception:
+        pass
 
-    # ✅ Intento 2: Torch nn.Module
-    if isinstance(model, nn.Module):
-        with torch.no_grad():
+    # Intento B: Si es un nn.Module directo
+    try:
+        from torch import nn
+        if isinstance(model, nn.Module):
             x_t = torch.tensor(X_np.astype(np.float32))
-            out = model(x_t)
+            out = _torch_try_forward(model, x_t)
             if isinstance(out, (list, tuple)):
                 out = out[0]
             out_np = out.detach().cpu().numpy().reshape(-1)
             if out_np.min() < 0.0 or out_np.max() > 1.0:
                 out_np = to_sigmoid(out_np)
             return out_np
+    except Exception:
+        pass
 
-    # Fallback defensivo
+    # Intento C: PyFunc estándar (por si el modelo fuera realmente un PyFunc no-pytorch)
+    try:
+        if hasattr(model, "predict"):
+            try:
+                df = pd.DataFrame(X_np, columns=columns_order)
+                out = model.predict(df)
+            except Exception:
+                out = model.predict(X_np)
+            out_np = np.array(out).reshape(-1)
+            if out_np.min() < 0.0 or out_np.max() > 1.0:
+                out_np = to_sigmoid(out_np)
+            return out_np
+    except Exception as e:
+        # si ya nada funcionó, relanza para ver el detalle en logs
+        raise e
+
     raise TypeError(f"Tipo de modelo no soportado: {type(model)}")
 
 
