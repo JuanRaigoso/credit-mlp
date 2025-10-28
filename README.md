@@ -133,7 +133,7 @@ La app muestra:
 **Juan David Raigoso Espinosa**  
 🎓 Juan David Raigoso E. Cientifíco de Datos.
 💼 Enfocado en Analítica de Datos, Machine Learning y Visualización (Power BI / Python)  
-🔗 [LinkedIn]([https://www.linkedin.com/in/juanraigoso](https://www.linkedin.com/in/juan-david-r-900824168/)) | [GitHub](https://github.com/JuanRaigoso)
+🔗 [LinkedIn](https://www.linkedin.com/in/juan-david-r-900824168/) | [GitHub](https://github.com/JuanRaigoso)
 
 ---
 
