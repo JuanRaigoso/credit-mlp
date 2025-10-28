@@ -1,8 +1,8 @@
 # 🏦 Credit-MLP: Evaluador de Riesgo Crediticio
 
 **Autor:** Juan David Raigoso Espinosa  
-**Profesión:** Ingeniero Industrial · Analista de Datos y Modelamiento Predictivo  
-**Repositorio:** [github.com/JuanRaigoso/credit-mlp](https://github.com/JuanRaigoso/credit-mlp)
+**Profesión:** Economista · Científico de datos.   
+**EMAIL:** Juan23@javerianacali.edu.co 
 
 ---
 
