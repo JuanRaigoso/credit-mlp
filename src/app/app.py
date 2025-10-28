@@ -308,11 +308,11 @@ def main():
         """
         <style>
             :root {
-                --bg: #0b1220;           /* fondo app */
+                --bg: #9BA2BA;           /* fondo app */
                 --panel: #121a2b;        /* paneles/cards */
                 --panel-2: #0e1626;      /* paneles secundarios */
-                --text: #e5e7eb;         /* texto principal */
-                --muted: #9aa4b2;        /* texto secundario */
+                --text: #0D0D0D;         /* texto principal */
+                --muted: #1F2F4D;        /* texto secundario */
                 --primary: #60a5fa;      /* azul */
                 --success: #34d399;      /* verde */
                 --warning: #fbbf24;      /* amarillo */
