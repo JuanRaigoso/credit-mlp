@@ -173,19 +173,16 @@ La app muestra:
 - Registro automático de inferencias  
 - Visualización moderna tipo dashboard  
 
-> 💻 Accede a la demo: *(enlace de Streamlit Cloud, si lo publicas)*
-
----
-
-## 🧾 Estructura del repositorio
-
+> 💻 Accede a la demo: *(https://credit-mlp-credito-juanraigoso.streamlit.app)*
+ Nota: La aplicación puede apagarse después de un tiempo de inactividad.
+Si al ingresar aparece el mensaje “App sleeping – Click to wake up”, simplemente haz clic en él, espera unos segundos mientras se recarga ¡y disfruta la aplicación!
 ---
 
 ## 🧑‍💻 Autor
 
 **Juan David Raigoso Espinosa**  
 🎓 Juan David Raigoso E. Cientifíco de Datos.
-💼 Enfocado en Analítica de Datos, Machine Learning y Visualización (Power BI / Python)  
+💼 Enfocado en Analítica de Datos, Machine Learning, y Deep Learning y Visualización (Power BI / Python / Rstudio)  
 🔗 [LinkedIn](https://www.linkedin.com/in/juan-david-r-900824168/) | [GitHub](https://github.com/JuanRaigoso)
 
 ---
@@ -218,7 +215,7 @@ El proyecto **Credit-MLP** demuestra la viabilidad de un modelo de aprendizaje p
 
 Si deseas conocer más sobre este proyecto o discutir colaboraciones:
 
-📧 **juanraigosoespinosa@gmail.com**  
+📧 **jraigosoespinosa@gmail.com**  
 🔗 [LinkedIn](https://www.linkedin.com/in/juanraigoso)
 
 ---
