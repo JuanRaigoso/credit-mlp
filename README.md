@@ -175,7 +175,7 @@ La app muestra:
 
 > 💻 Accede a la demo: *(https://credit-mlp-credito-juanraigoso.streamlit.app)*
  Nota: La aplicación puede apagarse después de un tiempo de inactividad.
-Si al ingresar aparece el mensaje “App sleeping – Click to wake up”, simplemente haz clic en él, espera unos segundos mientras se recarga ¡y disfruta la aplicación!
+Si al ingresar aparece el mensaje “This app has gone to sleep due to inactivity. Would you like to wake it back up?”, simplemente haz clic en "Yes, get this app back up!", espera unos segundos mientras se recarga ¡y disfruta la aplicación!
 ---
 
 ## 🧑‍💻 Autor
