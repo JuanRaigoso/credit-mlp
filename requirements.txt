@@ -6,6 +6,7 @@ mlflow
 torch
 torchvision
 torchaudio
-streamlit
 joblib
 python-dotenv
+streamlit==1.30.0
+altair==4.2.2
